@@ -4,7 +4,7 @@
 
 import {
   BUILD_SECONDS, EARLY_START_BONUS, HEARTH_MAX_WARMTH, START_SHARDS,
-  TOTAL_WAVES, TOWER_KEYS, TOWERS, WAVE_CLEAR_BONUS, KEEPER,
+  TOTAL_WAVES, TOWER_KEYS, TOWERS, WAVE_CLEAR_BONUS, KEEPER, WAVES,
 } from './config.js';
 import { createRandom } from './random.js';
 import { createWorld, pickSlot, pickTowerAt } from './world.js';
@@ -212,7 +212,7 @@ function resolveDeaths(g) {
       // The tale: who slew what, for the HUD's feed — short names, so the
       // line fits the panel at a glance.
       const killerShort = { Brazier: 'Brazier', 'Ember Cannon': 'Cannon', Keeper: 'Keeper' }[e.lastHitBy] || 'The hearth';
-      const preyShort = { wraith: 'Wraith', wolf: 'Wolf', golem: 'Golem', alpha: 'Alpha', matriarch: 'Matriarch' }[e.kind] || e.def.name;
+      const preyShort = { wraith: 'Wraith', wolf: 'Wolf', mite: 'Mite', wisp: 'Wisp', golem: 'Golem', bulwark: 'Bulwark', alpha: 'Alpha', matron: 'Matron', matriarch: 'Matriarch' }[e.kind] || e.def.name;
       const verb = killerShort === 'Brazier' ? 'scorched' : killerShort === 'Cannon' ? 'shattered' : 'slew';
       g.feed.push(`${killerShort} ${verb} a ${preyShort}`);
       if (g.feed.length > 3) g.feed.shift();
@@ -291,10 +291,9 @@ function updateWavePlay(g, dt, input) {
 }
 
 function requireWaveInterval(wave) {
-  const waves = [
-    1.6, 1.4, 1.25, 1.15, 1.05, 0.95, 0.9, 0.85, 0.8, 0.75,
-  ];
-  return waves[wave - 1] || 1;
+  // The spawn interval lives in the wave schedule itself (config.js), so
+  // the schedule is the one source of truth — no second list to drift.
+  return (WAVES[wave - 1] && WAVES[wave - 1].interval) || 1;
 }
 
 export function updateGame(g, dt, input) {
@@ -375,8 +374,11 @@ export function runSelfTest(g) {
     // walls on every road, then start the waves.
     const buildOrder = [
       ['brazier', 520, 250], ['brazier', 760, 250], ['brazier', 520, 470], ['brazier', 760, 470],
+      ['brazier', 420, 150], ['brazier', 860, 150],
+      ['brazier', 980, 250], ['brazier', 300, 470],
       ['cannon', 300, 150], ['cannon', 980, 150], ['cannon', 300, 570], ['cannon', 980, 570],
-      ['bell', 420, 250], ['bell', 860, 470],
+      ['cannon', 420, 570], ['cannon', 860, 570],
+      ['bell', 420, 250], ['bell', 860, 470], ['bell', 300, 250],
     ];
     // Grant the test enough shards to build the plan (the real game earns them).
     g.shards = 1000;
@@ -403,7 +405,8 @@ export function runSelfTest(g) {
     let wavesCleared = 0;
     let lastWave = 0;
     let maintainedWave = -1;
-    while (steps < 60 * 60 * 14 && g.screen !== SCREEN_VICTORY && g.screen !== SCREEN_DEFEAT) {
+    // Sixteen waves take longer than ten: thirty minutes of sim time.
+    while (steps < 60 * 60 * 30 && g.screen !== SCREEN_VICTORY && g.screen !== SCREEN_DEFEAT) {
       // Between waves, a real player spends: rebuild chewed walls, upgrade towers.
       if (g.screen === SCREEN_BUILD && maintainedWave !== g.wave) {
         maintainedWave = g.wave;

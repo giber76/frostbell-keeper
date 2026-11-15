@@ -54,7 +54,7 @@ export function stageShot(name, g, updateGame) {
     // first in the spawn queue, so the frame shows her with the boss bar
     // while the rest of the wave is still marching in. The loop below
     // then plays it for real; the real game still spawns her last.
-    g.wave = 9;
+    g.wave = 15;
     startWave(g);
     const bossAt = g.spawnQueue.findIndex((s) => s.kind === 'matriarch');
     if (bossAt >= 0) {
@@ -106,22 +106,22 @@ export function stageShot(name, g, updateGame) {
   if (name === 'victory') {
     startGame(g, 'Keeper');
     buildDefence(g);
-    g.wave = 10;
+    g.wave = 16;
     // A real night's numbers: seed 1's self-test victory, so the staged
     // end screen shows what a won game actually scores.
-    g.score = 13824;
-    g.kills = 353;
-    g.warmth = 70;
-    g.feed = ['Cannon shattered a Matriarch', 'Brazier scorched a Golem', 'Keeper slew a Wolf'];
+    g.score = 38847;
+    g.kills = 949;
+    g.warmth = 39;
+    g.feed = ['Cannon shattered a Matriarch', 'Brazier scorched a Bulwark', 'Keeper slew a Wisp'];
     g.message = '';
     g.screen = 'victory';
     return { screen: 'victory' };
   }
   if (name === 'defeat') {
     startGame(g, 'Keeper');
-    g.wave = 7;
-    g.score = 1420;
-    g.kills = 96;
+    g.wave = 12;
+    g.score = 3120;
+    g.kills = 210;
     g.warmth = 0;
     g.screen = 'defeat';
     return { screen: 'defeat' };

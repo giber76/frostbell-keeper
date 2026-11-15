@@ -6,7 +6,7 @@
 
 A winter hearth-defense game for the [make.fun best-game-01](https://make.fun/bounty/best-game-01) bounty ($1,000, top 10 share).
 
-The frost marches on the village. Ten waves of wraiths, wolves, golems — and the Frost Matriarch herself — come down four snow roads for the one warm thing left: the hearth. Build braziers, ember cannons, frostward bells and snow walls, then fight beside them as the Keeper, throwing ember bolts and tolling the great bell to freeze the march. Hold the warmth until dawn breaks after wave 10.
+The frost marches on the village. Sixteen waves of wraiths, wolves, golems, mites and wisps — and the Frost Matriarch herself — come down four snow roads for the one warm thing left: the hearth. Build braziers, ember cannons, frostward bells and snow walls, then fight beside them as the Keeper, throwing ember bolts and tolling the great bell to freeze the march. Hold the warmth until dawn breaks after wave 16.
 
 ## How to play
 

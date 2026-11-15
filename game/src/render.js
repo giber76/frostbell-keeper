@@ -3,7 +3,8 @@
 // defeat. All HUD is drawn on the canvas, so a screenshot always shows the
 // whole game. Coordinates here must match the click zones in game.js.
 
-import { BOARD, HEARTH, PALETTE, TOWERS, TOWER_KEYS, TOTAL_WAVES, NIGHT_TINT, KEEPER, WAVE_NAMES, ENEMIES } from './config.js';
+import { BOARD, HEARTH, PALETTE, TOWERS, TOWER_KEYS, TOTAL_WAVES, NIGHT_TINT, KEEPER, WAVE_NAMES, ENEMIES, WAVES } from './config.js';
+import { isBossKind, bossBarLabel } from './bosses.js';
 import { LANES, lanePoint, laneLength } from './world.js';
 import { towerRange, towerDamage, upgradeCost, canUpgrade } from './towers.js';
 import { drawLightPools, drawNightVignette, drawHearthGlow, drawTowerGlow } from './light.js';
@@ -298,9 +299,11 @@ function drawEnemy(ctx, e, now) {
   const { def } = e;
   const frozen = e.frozenUntil > now;
   const slowed = e.slowUntil > now && !frozen;
-  const bob = Math.sin(now * 5 + e.wobblePhase) * 3;
+  // Wisps float above the road — they fly over snow walls, so they ride
+  // higher than the creatures that march on it.
+  const bob = Math.sin(now * 5 + e.wobblePhase) * (e.kind === 'wisp' ? 7 : 3) - (e.kind === 'wisp' ? 10 : 0);
   // Shadow.
-  ctx.fillStyle = 'rgba(13,21,38,0.25)';
+  ctx.fillStyle = e.kind === 'wisp' ? 'rgba(13,21,38,0.10)' : 'rgba(13,21,38,0.25)';
   ctx.beginPath();
   ctx.ellipse(e.x, e.y + def.radius * 0.8, def.radius, def.radius * 0.4, 0, 0, Math.PI * 2);
   ctx.fill();
@@ -316,7 +319,7 @@ function drawEnemy(ctx, e, now) {
   ctx.beginPath();
   ctx.arc(e.x, e.y + bob, def.radius, 0, Math.PI * 2);
   ctx.fill();
-  if (e.kind === 'golem' || e.kind === 'matriarch') {
+  if (e.kind === 'golem' || e.kind === 'matriarch' || e.kind === 'bulwark' || e.kind === 'matron') {
     // Crystalline shoulders.
     ctx.fillStyle = def.core;
     ctx.beginPath();
@@ -347,6 +350,28 @@ function drawEnemy(ctx, e, now) {
     ctx.lineTo(e.x + 3, e.y + bob - 10);
     ctx.closePath();
     ctx.fill();
+  }
+  if (e.kind === 'mite') {
+    // Skittering legs.
+    ctx.strokeStyle = def.color;
+    ctx.lineWidth = 1.5;
+    for (const side of [-1, 1]) {
+      ctx.beginPath();
+      ctx.moveTo(e.x + side * (def.radius - 2), e.y + bob - 2);
+      ctx.lineTo(e.x + side * (def.radius + 5), e.y + bob + 4);
+      ctx.moveTo(e.x + side * (def.radius - 2), e.y + bob + 4);
+      ctx.lineTo(e.x + side * (def.radius + 5), e.y + bob + 8);
+      ctx.stroke();
+    }
+  }
+  if (e.kind === 'wisp') {
+    // A fading wisp-trail behind it.
+    ctx.strokeStyle = 'rgba(168,224,255,0.5)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(e.x, e.y + bob);
+    ctx.quadraticCurveTo(e.x - 14, e.y + bob + 6, e.x - 22, e.y + bob - 2);
+    ctx.stroke();
   }
   // Eyes: two cold sparks.
   ctx.fillStyle = frozen ? '#eaf7ff' : '#0d1526';
@@ -380,6 +405,9 @@ function drawEnemy(ctx, e, now) {
   }
   if (e.kind === 'alpha') {
     text(ctx, 'RIME WOLF ALPHA', e.x, e.y + bob - def.radius - 22, 12, '#c9a7ff', 'center', '700');
+  }
+  if (e.kind === 'matron') {
+    text(ctx, e.enraged ? 'FROSTBITE MATRON — ENRAGED' : 'FROSTBITE MATRON', e.x, e.y + bob - def.radius - 22, 12, e.enraged ? '#ff8fa3' : '#e0aaff', 'center', '700');
   }
 }
 
@@ -513,17 +541,17 @@ function drawHud(ctx, g) {
     text(ctx, `COMBO ×${Math.min(g.combo, 9)}`, 860, 22, 15, PALETTE.gold, 'center', '700');
   }
 
-  // Boss bar: the Matriarch or the Rime Wolf Alpha, named, with a wide bar.
-  const boss = g.enemies.find((e) => e.kind === 'matriarch' || e.kind === 'alpha');
+  // Boss bar: the Matriarch, the Matron or the Rime Wolf Alpha, named,
+  // with a wide bar.
+  const boss = g.enemies.find((e) => isBossKind(e.kind));
   if (boss && g.screen === 'wave') {
-    const label = boss.kind === 'matriarch'
-      ? (boss.enraged ? 'THE FROST MATRIARCH — PHASE 2 · ENRAGED' : 'THE FROST MATRIARCH — PHASE 1')
-      : 'RIME WOLF ALPHA';
+    const label = bossBarLabel(boss.kind, boss.enraged);
+    const bossColor = boss.kind === 'matriarch' ? '#d8b4fe' : boss.kind === 'matron' ? '#e0aaff' : '#c9a7ff';
     const frac = Math.max(0, boss.hp / boss.maxHp);
     ctx.fillStyle = 'rgba(13,21,38,0.88)';
     rr(ctx, 430, 56, 420, 30, 8);
     ctx.fill();
-    ctx.strokeStyle = boss.kind === 'matriarch' ? '#d8b4fe' : '#c9a7ff';
+    ctx.strokeStyle = bossColor;
     ctx.lineWidth = 1.5;
     ctx.stroke();
     ctx.fillStyle = 'rgba(234,242,255,0.2)';
@@ -630,7 +658,7 @@ function drawHud(ctx, g) {
   ctx.fillStyle = 'rgba(13,21,38,0.92)';
   ctx.fillRect(0, 664, 1280, 56);
   text(ctx, '1–4 choose a tower · Click a plot to build · U upgrade · SPACE toll the bell · ESC pause · M mute', 640, 684, 13, PALETTE.dim);
-  text(ctx, 'WIN: hold the hearth through wave 10 · LOSE: warmth hits 0 · Every creature that reaches the hearth steals its warmth.', 640, 704, 11, PALETTE.dim);
+  text(ctx, `WIN: hold the hearth through wave ${TOTAL_WAVES} · LOSE: warmth hits 0 · Every creature that reaches the hearth steals its warmth.`, 640, 704, 11, PALETTE.dim);
 
   // Toast message.
   if (g.message) {
@@ -658,23 +686,18 @@ function drawHud(ctx, g) {
 }
 
 function kindName(kind) {
-  return { wraith: 'Frost Wraiths', wolf: 'Frost Wolves', golem: 'Ice Golems', matriarch: 'Frost Matriarch' }[kind] || kind;
+  return { wraith: 'Frost Wraiths', wolf: 'Frost Wolves', mite: 'Rime Mites', wisp: 'Frost Wisps', golem: 'Ice Golems', bulwark: 'Glacier Bulwarks', alpha: 'Rime Wolf Alpha', matron: 'Frostbite Matron', matriarch: 'Frost Matriarch' }[kind] || kind;
 }
 
+// The wave's mix, from the schedule in config.js — one source of truth,
+// without the spawn interval (the panel counts creatures, not seconds).
 function waveSpec(wave) {
-  const waves = [
-    { wraith: 8, wolf: 0, golem: 0, matriarch: 0 },
-    { wraith: 12, wolf: 3, golem: 0, matriarch: 0 },
-    { wraith: 14, wolf: 6, golem: 1, matriarch: 0 },
-    { wraith: 16, wolf: 9, golem: 2, matriarch: 0 },
-    { wraith: 20, wolf: 12, golem: 3, matriarch: 0 },
-    { wraith: 22, wolf: 16, golem: 4, matriarch: 0 },
-    { wraith: 24, wolf: 18, golem: 6, matriarch: 0 },
-    { wraith: 26, wolf: 22, golem: 7, matriarch: 0 },
-    { wraith: 28, wolf: 24, golem: 9, matriarch: 0 },
-    { wraith: 20, wolf: 16, golem: 6, matriarch: 1 },
-  ];
-  return waves[wave - 1] || {};
+  const spec = WAVES[wave - 1] || {};
+  const counts = {};
+  for (const [kind, n] of Object.entries(spec)) {
+    if (kind !== 'interval') counts[kind] = n;
+  }
+  return counts;
 }
 
 function drawTitle(ctx, g) {
@@ -715,7 +738,7 @@ function drawTitle(ctx, g) {
   text(ctx, 'FROSTBELL', 640, 156, 74, PALETTE.gold, 'center', '700');
   text(ctx, '— Keeper of the Last Hearth —', 640, 212, 18, PALETTE.ink, 'center', '400');
   // The pitch.
-  text(ctx, 'The frost marches on the village. Ten waves. One hearth. Hold the warmth until dawn.', 640, 286, 16, PALETTE.ink);
+  text(ctx, 'The frost marches on the village. Sixteen waves. One hearth. Hold the warmth until dawn.', 640, 286, 16, PALETTE.ink);
   text(ctx, 'Build braziers, cannons, bells and snow walls — and fight beside them with ember bolts.', 640, 310, 14, PALETTE.dim);
   // PLAY button (click zone in game.js: x 540–740, y 330–392).
   ctx.fillStyle = '#a8326e';
@@ -741,7 +764,7 @@ function drawTitle(ctx, g) {
   text(ctx, 'HOW TO PLAY', 640, 516, 13, PALETTE.gold, 'center', '700');
   text(ctx, '1–4 pick a tower, click a stone circle to build it · Snow Walls go on the glowing road markers', 640, 540, 13, PALETTE.ink);
   text(ctx, 'WASD walk · mouse aim · hold click to throw ember bolts · SPACE tolls the bell and freezes the march', 640, 562, 13, PALETTE.ink);
-  text(ctx, 'Creatures that reach the hearth steal its warmth. At 0 warmth the village freezes. Survive all 10 waves.', 640, 584, 13, PALETTE.ink);
+  text(ctx, `Creatures that reach the hearth steal its warmth. At 0 warmth the village freezes. Survive all ${TOTAL_WAVES} waves.`, 640, 584, 13, PALETTE.ink);
   text(ctx, 'Press ENTER to begin', 640, 626, 14, PALETTE.gold, 'center', '700');
 }
 
@@ -765,7 +788,7 @@ function drawEnd(ctx, g, won) {
   ctx.stroke();
   text(ctx, won ? 'DAWN BREAKS' : 'THE HEARTH IS COLD', 640, 190, 40, won ? PALETTE.gold : '#9fd8ff', 'center', '700');
   text(ctx, won
-    ? 'Ten waves held. The Frost Matriarch is broken — her wolves scatter into the dark.'
+    ? `${TOTAL_WAVES} waves held. The Frost Matriarch is broken — her wolves scatter into the dark.`
     : 'The last warmth is gone. Snow settles over the silent square.',
   640, 232, 15, PALETTE.ink);
   text(ctx, `FINAL SCORE   ${g.score}`, 640, 300, 34, PALETTE.ink, 'center', '700');

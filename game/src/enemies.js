@@ -3,6 +3,7 @@
 // snow wall on that road makes it stop and chew the wall instead.
 
 import { ENEMIES, enemyHp, WAVES } from './config.js';
+import { isBossKind, bossEnrageFactor } from './bosses.js';
 import { laneLength, lanePoint, wallOnLane } from './world.js';
 
 let nextId = 1;
@@ -41,19 +42,20 @@ export function waveSpawnList(wave, random) {
   const spec = WAVES[wave - 1];
   const lanes = ['N', 'E', 'S', 'W'];
   const list = [];
-  for (const kind of ['wraith', 'wolf', 'golem', 'alpha', 'matriarch']) {
+  for (const kind of ['wraith', 'wolf', 'mite', 'wisp', 'golem', 'bulwark', 'alpha', 'matron', 'matriarch']) {
     for (let i = 0; i < (spec[kind] || 0); i += 1) {
-      list.push({ kind, lane: lanes[(i + (kind === 'matriarch' ? 1 : 0)) % 4] });
+      list.push({ kind, lane: lanes[(i + (kind === 'matriarch' || kind === 'matron' ? 1 : 0)) % 4] });
     }
   }
-  // Shuffle, but keep the matriarch last so the boss arrives at the end.
-  const boss = list.filter((s) => s.kind === 'matriarch');
-  const rest = list.filter((s) => s.kind !== 'matriarch');
+  // Shuffle, but keep the bosses last so each boss arrives at the end —
+  // the Matron after the wave-10 march, the Matriarch after the last one.
+  const bosses = list.filter((s) => isBossKind(s.kind));
+  const rest = list.filter((s) => !isBossKind(s.kind));
   for (let i = rest.length - 1; i > 0; i -= 1) {
     const j = Math.floor(random.next() * (i + 1));
     [rest[i], rest[j]] = [rest[j], rest[i]];
   }
-  return [...rest, ...boss];
+  return [...rest, ...bosses];
 }
 
 export function updateEnemy(e, dt, now, world) {
@@ -71,14 +73,15 @@ export function updateEnemy(e, dt, now, world) {
   }
   let speed = e.speed;
   if (e.slowUntil > now) speed *= e.slowFactor;
-  // The Matriarch's second phase: below half health she runs faster and
-  // burns violet — the march's last push before dawn.
-  if (e.kind === 'matriarch' && e.hp <= e.maxHp / 2) {
+  // A boss's second phase: below half health she runs faster and burns
+  // brighter — the march's last push before dawn.
+  if (isBossKind(e.kind) && e.hp <= e.maxHp / 2) {
     e.enraged = true;
-    speed *= 1.4;
+    speed *= bossEnrageFactor(e.kind);
   }
-  // A snow wall on this road: stop at it and chew.
-  const wall = wallOnLane(world, e.lane);
+  // A snow wall on this road: stop at it and chew. Wisps fly over walls —
+  // no barricade holds them, so the Keeper's towers must do the work.
+  const wall = e.kind === 'wisp' ? null : wallOnLane(world, e.lane);
   if (wall && wall.tower) {
     const stopAt = wall.dist - e.def.radius - 16;
     if (e.dist >= stopAt) {

@@ -3,7 +3,7 @@
 //
 // ?seed=N fixes the night's randomness. ?shot=title|build|play|victory|defeat
 // (with &seed=N) stages that scene instead of running the loop, paints it
-// twice and sets window.__shotReady for a screenshot. ?selftest=1 plays ten
+// twice and sets window.__shotReady for a screenshot. ?selftest=1 plays sixteen
 // waves with a scripted strategy and reports SELFTEST ok (or ERR:) in the
 // document title, so a headless browser can check the game end to end.
 

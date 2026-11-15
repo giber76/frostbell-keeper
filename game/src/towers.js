@@ -67,6 +67,7 @@ export function updateTower(tower, dt, now, enemies, addBolt) {
         if (e.dead || e.leaked) continue;
         if (Math.hypot(e.x - tower.x, e.y - tower.y) <= range) {
           e.hp -= towerDamage(tower);
+          e.lastHitBy = 'Brazier';
           e.burnUntil = now + 1.5;
           e.burnDps = Math.max(e.burnDps, towerDamage(tower) * 0.6);
           e.flash = 0.12;

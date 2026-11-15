@@ -27,6 +27,8 @@ export function makeEnemy(kind, lane, wave, random) {
     burnUntil: 0,
     burnDps: 0,
     flash: 0,
+    lastHitBy: '',
+    enraged: false,
     chewing: false,
     dead: false,
     leaked: false,
@@ -39,7 +41,7 @@ export function waveSpawnList(wave, random) {
   const spec = WAVES[wave - 1];
   const lanes = ['N', 'E', 'S', 'W'];
   const list = [];
-  for (const kind of ['wraith', 'wolf', 'golem', 'matriarch']) {
+  for (const kind of ['wraith', 'wolf', 'golem', 'alpha', 'matriarch']) {
     for (let i = 0; i < (spec[kind] || 0); i += 1) {
       list.push({ kind, lane: lanes[(i + (kind === 'matriarch' ? 1 : 0)) % 4] });
     }
@@ -69,6 +71,12 @@ export function updateEnemy(e, dt, now, world) {
   }
   let speed = e.speed;
   if (e.slowUntil > now) speed *= e.slowFactor;
+  // The Matriarch's second phase: below half health she runs faster and
+  // burns violet — the march's last push before dawn.
+  if (e.kind === 'matriarch' && e.hp <= e.maxHp / 2) {
+    e.enraged = true;
+    speed *= 1.4;
+  }
   // A snow wall on this road: stop at it and chew.
   const wall = wallOnLane(world, e.lane);
   if (wall && wall.tower) {

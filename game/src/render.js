@@ -3,9 +3,10 @@
 // defeat. All HUD is drawn on the canvas, so a screenshot always shows the
 // whole game. Coordinates here must match the click zones in game.js.
 
-import { BOARD, HEARTH, PALETTE, TOWERS, TOWER_KEYS, TOTAL_WAVES, NIGHT_TINT, KEEPER } from './config.js';
+import { BOARD, HEARTH, PALETTE, TOWERS, TOWER_KEYS, TOTAL_WAVES, NIGHT_TINT, KEEPER, WAVE_NAMES, ENEMIES } from './config.js';
 import { LANES, lanePoint, laneLength } from './world.js';
 import { towerRange, towerDamage, upgradeCost, canUpgrade } from './towers.js';
+import { drawLightPools, drawNightVignette, drawHearthGlow, drawTowerGlow } from './light.js';
 
 function rr(ctx, x, y, w, h, r) {
   ctx.beginPath();
@@ -67,10 +68,11 @@ function drawBoard(ctx, g) {
     ctx.fillRect(sx, sy, 2, 2);
   }
   ctx.globalAlpha = 1;
-  // Snow ground.
-  ctx.fillStyle = '#c3cfe0';
+  // Night ground: dark blue snow, so the hearth's warm light is the
+  // brightest thing in the frame. Pale ground washed the fire out.
+  ctx.fillStyle = PALETTE.ground;
   ctx.fillRect(0, 0, 1280, 720);
-  ctx.fillStyle = 'rgba(150,165,195,0.5)';
+  ctx.fillStyle = 'rgba(38,54,90,0.55)';
   for (let i = 0; i < 24; i += 1) {
     const sx = (i * 211) % 1280;
     const sy = (i * 97) % 720;
@@ -78,15 +80,15 @@ function drawBoard(ctx, g) {
     ctx.ellipse(sx, sy, 60 + (i % 5) * 14, 18 + (i % 3) * 8, 0, 0, Math.PI * 2);
     ctx.fill();
   }
-  // The board: stone plaza.
-  ctx.fillStyle = '#a3aec2';
+  // The board: a dark stone plaza.
+  ctx.fillStyle = PALETTE.plaza;
   rr(ctx, BOARD.x - 8, BOARD.y - 8, BOARD.w + 16, BOARD.h + 16, 12);
   ctx.fill();
-  ctx.strokeStyle = PALETTE.stoneDark;
+  ctx.strokeStyle = PALETTE.plazaEdge;
   ctx.lineWidth = 3;
   ctx.stroke();
   // Flagstones.
-  ctx.strokeStyle = 'rgba(93,107,132,0.35)';
+  ctx.strokeStyle = 'rgba(120,145,200,0.22)';
   ctx.lineWidth = 1;
   for (let x = BOARD.x; x <= BOARD.x + BOARD.w; x += 54) {
     ctx.beginPath(); ctx.moveTo(x, BOARD.y); ctx.lineTo(x, BOARD.y + BOARD.h); ctx.stroke();
@@ -99,14 +101,14 @@ function drawBoard(ctx, g) {
     const gate = LANES[lane].gate;
     const len = laneLength(lane) + HEARTH.r + 10;
     const end = lanePoint(lane, len, 0);
-    ctx.strokeStyle = '#cdd9ea';
+    ctx.strokeStyle = PALETTE.road;
     ctx.lineWidth = 44;
     ctx.lineCap = 'round';
     ctx.beginPath();
     ctx.moveTo(gate.x, gate.y);
     ctx.lineTo(end.x, end.y);
     ctx.stroke();
-    ctx.strokeStyle = 'rgba(93,107,132,0.4)';
+    ctx.strokeStyle = 'rgba(159,216,255,0.35)';
     ctx.lineWidth = 1;
     ctx.setLineDash([8, 10]);
     ctx.beginPath();
@@ -119,7 +121,7 @@ function drawBoard(ctx, g) {
     ctx.beginPath();
     ctx.arc(gate.x, gate.y, 20, 0, Math.PI * 2);
     ctx.fill();
-    ctx.fillStyle = '#3d4a63';
+    ctx.fillStyle = '#2c3852';
     ctx.beginPath();
     ctx.arc(gate.x, gate.y, 13, 0, Math.PI * 2);
     ctx.fill();
@@ -154,15 +156,8 @@ function drawBoard(ctx, g) {
 function drawHearth(ctx, g) {
   const { now, warmth } = g;
   const flick = 1 + Math.sin(now * 9) * 0.06 + Math.sin(now * 23) * 0.04;
-  const glowR = 150 * flick * (0.35 + 0.65 * (warmth / 100));
-  const glow = ctx.createRadialGradient(HEARTH.x, HEARTH.y, 10, HEARTH.x, HEARTH.y, glowR);
-  glow.addColorStop(0, 'rgba(255,180,71,0.55)');
-  glow.addColorStop(0.5, 'rgba(255,122,26,0.22)');
-  glow.addColorStop(1, 'rgba(255,122,26,0)');
-  ctx.fillStyle = glow;
-  ctx.beginPath();
-  ctx.arc(HEARTH.x, HEARTH.y, glowR, 0, Math.PI * 2);
-  ctx.fill();
+  // The glow itself lives in light.js (drawHearthGlow) and is painted
+  // underneath everything; here is the stone ring and the fire.
   // Stone ring.
   ctx.fillStyle = '#6b7688';
   ctx.beginPath();
@@ -193,7 +188,7 @@ function drawHearth(ctx, g) {
   ctx.ellipse(HEARTH.x, HEARTH.y + 4, 7, 9 * flick, 0, 0, Math.PI * 2);
   ctx.fill();
   // Warmth label under the hearth.
-  text(ctx, `HEARTH  ${Math.max(0, Math.ceil(warmth))}`, HEARTH.x, HEARTH.y + HEARTH.r + 24, 13, warmth < 30 ? '#c22727' : '#0d1526', 'center', '700');
+  text(ctx, `HEARTH  ${Math.max(0, Math.ceil(warmth))}`, HEARTH.x, HEARTH.y + HEARTH.r + 24, 13, warmth < 30 ? '#ff6b6b' : '#ffd76a', 'center', '700');
 }
 
 function drawSlots(ctx, g) {
@@ -258,13 +253,8 @@ function drawTower(ctx, t, now) {
   ctx.fill();
   if (t.kind === 'brazier') {
     const flick = 1 + Math.sin(now * 11 + t.x) * 0.12;
-    const glow = ctx.createRadialGradient(t.x, t.y, 4, t.x, t.y, 44 * flick);
-    glow.addColorStop(0, 'rgba(255,180,71,0.6)');
-    glow.addColorStop(1, 'rgba(255,122,26,0)');
-    ctx.fillStyle = glow;
-    ctx.beginPath();
-    ctx.arc(t.x, t.y, 44 * flick, 0, Math.PI * 2);
-    ctx.fill();
+    // The glow is painted by light.js (drawTowerGlow), underneath the tower;
+    // here is the flame itself.
     ctx.fillStyle = PALETTE.fireHot;
     ctx.beginPath();
     ctx.moveTo(t.x - 8, t.y + 6);
@@ -386,21 +376,17 @@ function drawEnemy(ctx, e, now) {
     ctx.fillRect(e.x - w / 2, e.y + bob - def.radius - 10, w * Math.max(0, e.hp / e.maxHp), 5);
   }
   if (e.kind === 'matriarch') {
-    text(ctx, 'THE FROST MATRIARCH', e.x, e.y + bob - def.radius - 22, 12, '#d8b4fe', 'center', '700');
+    text(ctx, e.enraged ? 'THE FROST MATRIARCH — ENRAGED' : 'THE FROST MATRIARCH', e.x, e.y + bob - def.radius - 22, 12, e.enraged ? '#ff8fa3' : '#d8b4fe', 'center', '700');
+  }
+  if (e.kind === 'alpha') {
+    text(ctx, 'RIME WOLF ALPHA', e.x, e.y + bob - def.radius - 22, 12, '#c9a7ff', 'center', '700');
   }
 }
 
 function drawKeeper(ctx, k, now) {
   if (!k) return;
   const bob = k.moving ? Math.sin(k.walkPhase) * 2 : Math.sin(now * 2) * 1;
-  // Lantern glow.
-  const glow = ctx.createRadialGradient(k.x, k.y, 4, k.x, k.y, 46);
-  glow.addColorStop(0, 'rgba(255,215,106,0.5)');
-  glow.addColorStop(1, 'rgba(255,215,106,0)');
-  ctx.fillStyle = glow;
-  ctx.beginPath();
-  ctx.arc(k.x, k.y, 46, 0, Math.PI * 2);
-  ctx.fill();
+  // The lantern glow is painted by light.js (drawKeeperGlow), underneath.
   // Cloak.
   ctx.fillStyle = '#7a4a21';
   ctx.beginPath();
@@ -499,10 +485,12 @@ function drawHud(ctx, g) {
   text(ctx, 'Keeper of the Last Hearth', 110, 44, 10, PALETTE.dim);
   const waveLabel = g.screen === 'title' ? '—' : `WAVE ${Math.max(1, g.wave)} / ${TOTAL_WAVES}`;
   text(ctx, waveLabel, 640, 22, 20, PALETTE.ink, 'center', '700');
+  const waveName = g.wave >= 1 && g.wave <= TOTAL_WAVES ? ` — ${WAVE_NAMES[g.wave - 1].toUpperCase()}` : '';
+  const nextName = g.wave + 1 >= 1 && g.wave + 1 <= TOTAL_WAVES ? `: ${WAVE_NAMES[g.wave].toUpperCase()}` : '';
   const sub = g.screen === 'wave'
-    ? `${g.enemies.length + g.spawnQueue.length} frost creatures remain`
+    ? `${g.enemies.length + g.spawnQueue.length} frost creatures remain${waveName}`
     : g.screen === 'build'
-      ? `Build phase — ${Math.max(0, Math.ceil(g.buildTimer))}s — ENTER to start wave ${g.wave + 1}`
+      ? `Build phase — ${Math.max(0, Math.ceil(g.buildTimer))}s — ENTER to start wave ${g.wave + 1}${nextName}`
       : g.screen === 'title' ? 'The night is cold. The hearth is all that is warm.'
         : g.screen === 'victory' ? 'Dawn has broken.'
           : 'The hearth has gone cold.';
@@ -520,6 +508,34 @@ function drawHud(ctx, g) {
   text(ctx, `WARMTH ${Math.max(0, Math.ceil(g.warmth))}`, bx + 75, 22, 11, '#fff', 'center', '700');
   text(ctx, `SCORE ${g.score}`, 1180, 22, 15, PALETTE.ink, 'center', '700');
   text(ctx, `◆ ${g.shards}`, 1180, 40, 12, PALETTE.gold, 'center', '700');
+  // Combo: kills in quick succession multiply the score, up to x3.
+  if (g.combo >= 2 && g.now <= g.comboUntil) {
+    text(ctx, `COMBO ×${Math.min(g.combo, 9)}`, 860, 22, 15, PALETTE.gold, 'center', '700');
+  }
+
+  // Boss bar: the Matriarch or the Rime Wolf Alpha, named, with a wide bar.
+  const boss = g.enemies.find((e) => e.kind === 'matriarch' || e.kind === 'alpha');
+  if (boss && g.screen === 'wave') {
+    const label = boss.kind === 'matriarch'
+      ? (boss.enraged ? 'THE FROST MATRIARCH — PHASE 2 · ENRAGED' : 'THE FROST MATRIARCH — PHASE 1')
+      : 'RIME WOLF ALPHA';
+    const frac = Math.max(0, boss.hp / boss.maxHp);
+    ctx.fillStyle = 'rgba(13,21,38,0.88)';
+    rr(ctx, 430, 56, 420, 30, 8);
+    ctx.fill();
+    ctx.strokeStyle = boss.kind === 'matriarch' ? '#d8b4fe' : '#c9a7ff';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(234,242,255,0.2)';
+    rr(ctx, 442, 74, 396, 8, 4);
+    ctx.fill();
+    ctx.fillStyle = boss.enraged ? '#ff8fa3' : '#b388ff';
+    if (frac > 0) {
+      rr(ctx, 442, 74, 396 * frac, 8, 4);
+      ctx.fill();
+    }
+    text(ctx, label, 640, 66, 12, '#e9dcff', 'center', '700');
+  }
 
   // Left panel: build menu.
   panel(ctx, 8, 64, 192, 330, 'BUILD  (click a plot)');
@@ -597,11 +613,24 @@ function drawHud(ctx, g) {
     text(ctx, 'SPACE — freeze the march', 1176, 486, 13, PALETTE.heal);
   }
 
+  // The tale: the last three slayings, who slew what.
+  panel(ctx, 1080, 518, 192, 138, 'THE TALE');
+  if (g.feed.length === 0) {
+    text(ctx, 'No creature slain yet.', 1176, 580, 11, PALETTE.dim);
+  } else {
+    let fy = 566;
+    for (const line of g.feed) {
+      text(ctx, line, 1176, fy, 10.5, PALETTE.ink, 'center', '400');
+      fy += 20;
+    }
+    text(ctx, 'The night remembers.', 1176, fy + 8, 10, PALETTE.dim, 'center', '400');
+  }
+
   // Bottom bar: controls.
   ctx.fillStyle = 'rgba(13,21,38,0.92)';
   ctx.fillRect(0, 664, 1280, 56);
   text(ctx, '1–4 choose a tower · Click a plot to build · U upgrade · SPACE toll the bell · ESC pause · M mute', 640, 684, 13, PALETTE.dim);
-  text(ctx, 'Hold the hearth through 10 waves until dawn. Every creature that reaches it steals its warmth.', 640, 704, 11, PALETTE.dim);
+  text(ctx, 'WIN: hold the hearth through wave 10 · LOSE: warmth hits 0 · Every creature that reaches the hearth steals its warmth.', 640, 704, 11, PALETTE.dim);
 
   // Toast message.
   if (g.message) {
@@ -649,8 +678,33 @@ function waveSpec(wave) {
 }
 
 function drawTitle(ctx, g) {
-  ctx.fillStyle = 'rgba(8,12,28,0.45)';
+  // A veil that is dark at the top and thin at the bottom, so the square
+  // below still shows through.
+  const veil = ctx.createLinearGradient(0, 0, 0, 720);
+  veil.addColorStop(0, 'rgba(8,12,28,0.62)');
+  veil.addColorStop(0.55, 'rgba(8,12,28,0.42)');
+  veil.addColorStop(1, 'rgba(8,12,28,0.22)');
+  ctx.fillStyle = veil;
   ctx.fillRect(0, 0, 1280, 720);
+  // A living square behind the title: braziers lit, wraiths already on the
+  // roads — the cover shot must show the game, not an empty board.
+  const dioramaBraziers = [
+    { kind: 'brazier', x: 300, y: 150, level: 2, angle: -Math.PI / 2, hp: 1, maxHp: 1, cooldown: 0, muzzle: 0 },
+    { kind: 'brazier', x: 520, y: 470, level: 2, angle: -Math.PI / 2, hp: 1, maxHp: 1, cooldown: 0, muzzle: 0 },
+    { kind: 'brazier', x: 760, y: 470, level: 2, angle: -Math.PI / 2, hp: 1, maxHp: 1, cooldown: 0, muzzle: 0 },
+  ];
+  for (const t of dioramaBraziers) {
+    drawTowerGlow(ctx, t, g.now);
+    drawTower(ctx, t, g.now);
+  }
+  drawHearthGlow(ctx, g);
+  const dioramaWraiths = [
+    { kind: 'wraith', def: ENEMIES.wraith, x: 300, y: 360, frozenUntil: 0, slowUntil: 0, wobblePhase: 0.4, flash: 0, hp: 30, maxHp: 30 },
+    { kind: 'wraith', def: ENEMIES.wraith, x: 380, y: 360, frozenUntil: 0, slowUntil: 0, wobblePhase: 2.1, flash: 0, hp: 30, maxHp: 30 },
+    { kind: 'wraith', def: ENEMIES.wraith, x: 980, y: 360, frozenUntil: 0, slowUntil: 0, wobblePhase: 1.2, flash: 0, hp: 30, maxHp: 30 },
+    { kind: 'wraith', def: ENEMIES.wraith, x: 1050, y: 360, frozenUntil: 0, slowUntil: 0, wobblePhase: 3.0, flash: 0, hp: 30, maxHp: 30 },
+  ];
+  for (const e of dioramaWraiths) drawEnemy(ctx, e, g.now);
   // Title banner.
   ctx.fillStyle = 'rgba(22,35,63,0.92)';
   ctx.strokeStyle = PALETTE.gold;
@@ -692,7 +746,16 @@ function drawTitle(ctx, g) {
 }
 
 function drawEnd(ctx, g, won) {
-  ctx.fillStyle = won ? 'rgba(255,190,80,0.28)' : 'rgba(8,12,28,0.62)';
+  // Dawn breaks over the square: a warm wash, gold at the top fading down.
+  if (won) {
+    const dawn = ctx.createLinearGradient(0, 0, 0, 720);
+    dawn.addColorStop(0, 'rgba(255,190,80,0.5)');
+    dawn.addColorStop(0.5, 'rgba(255,170,90,0.3)');
+    dawn.addColorStop(1, 'rgba(255,150,60,0.12)');
+    ctx.fillStyle = dawn;
+  } else {
+    ctx.fillStyle = 'rgba(8,12,28,0.62)';
+  }
   ctx.fillRect(0, 0, 1280, 720);
   ctx.fillStyle = 'rgba(22,35,63,0.94)';
   ctx.strokeStyle = won ? PALETTE.gold : '#5aa9e6';
@@ -702,10 +765,10 @@ function drawEnd(ctx, g, won) {
   ctx.stroke();
   text(ctx, won ? 'DAWN BREAKS' : 'THE HEARTH IS COLD', 640, 190, 40, won ? PALETTE.gold : '#9fd8ff', 'center', '700');
   text(ctx, won
-    ? 'Ten waves held. The frost retreats, and the village sees the sun again.'
+    ? 'Ten waves held. The Frost Matriarch is broken — her wolves scatter into the dark.'
     : 'The last warmth is gone. Snow settles over the silent square.',
   640, 232, 15, PALETTE.ink);
-  text(ctx, `FINAL SCORE   ${g.score}`, 640, 300, 26, PALETTE.ink, 'center', '700');
+  text(ctx, `FINAL SCORE   ${g.score}`, 640, 300, 34, PALETTE.ink, 'center', '700');
   text(ctx, `Waves held: ${won ? TOTAL_WAVES : Math.max(0, g.wave - 1)} / ${TOTAL_WAVES}    ·    Creatures slain: ${g.kills}    ·    Warmth left: ${Math.max(0, Math.ceil(g.warmth))}`, 640, 340, 14, PALETTE.dim);
   text(ctx, `Best score: ${Math.max(g.best, g.score)}`, 640, 372, 14, PALETTE.dim);
   // Restart button (click zone in game.js: x 540–740, y 520–572).
@@ -722,6 +785,8 @@ function drawEnd(ctx, g, won) {
 function drawGame(ctx, g) {
   drawBoard(ctx, g);
   drawSlots(ctx, g);
+  // The light pass: hearth, braziers and the Keeper's lantern, under all.
+  drawLightPools(ctx, g);
   drawHearth(ctx, g);
   // Towers, sorted so lower ones draw later.
   const towers = [];
@@ -746,6 +811,9 @@ function drawGame(ctx, g) {
   drawKeeper(ctx, g.keeper, g.now);
   drawBolts(ctx, g);
   drawParticles(ctx, g);
+  // Cold at the edges, warm at the centre — the vignette holds the eye
+  // on the hearth.
+  drawNightVignette(ctx);
   drawHud(ctx, g);
   if (g.screen === 'title') drawTitle(ctx, g);
   if (g.screen === 'victory') drawEnd(ctx, g, true);

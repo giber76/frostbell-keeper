@@ -44,8 +44,10 @@ export function updateParticles(p, dt, now, hearth) {
     f.y -= 34 * dt;
     if (f.life <= 0) p.floaters.splice(i, 1);
   }
-  // Hearth embers rise and fade above the fire.
-  if (p.embers.length < 26 && Math.random() < 0.5) {
+  // Hearth embers rise and fade above the fire. The gate draws from the
+  // seeded random, not Math.random — the whole night must replay exactly
+  // from its seed, or a screenshot scene and a self-test would drift.
+  if (p.embers.length < 26 && p.random.chance(0.5)) {
     p.embers.push({
       x: hearth.x + p.random.range(-22, 22), y: hearth.y - 6,
       vy: p.random.range(-46, -22), vx: p.random.range(-8, 8),

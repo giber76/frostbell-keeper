@@ -21,15 +21,35 @@ export const WAVE_CLEAR_BONUS = 100;
 export const EARLY_START_BONUS = 15;
 
 // The night deepens as the waves pass: the palette tint per wave, 0 = dusk.
+// Kept light — the dark ground itself does the night work now, so the tint
+// only deepens the edges a little as the night goes on.
 export const NIGHT_TINT = [
-  'rgba(8,12,28,0.00)', 'rgba(8,12,28,0.05)', 'rgba(8,12,28,0.10)',
-  'rgba(8,12,28,0.15)', 'rgba(8,12,28,0.20)', 'rgba(8,12,28,0.25)',
-  'rgba(8,12,28,0.30)', 'rgba(8,12,28,0.35)', 'rgba(8,12,28,0.40)',
-  'rgba(8,12,28,0.45)',
+  'rgba(8,12,28,0.00)', 'rgba(8,12,28,0.02)', 'rgba(8,12,28,0.04)',
+  'rgba(8,12,28,0.06)', 'rgba(8,12,28,0.08)', 'rgba(8,12,28,0.10)',
+  'rgba(8,12,28,0.12)', 'rgba(8,12,28,0.14)', 'rgba(8,12,28,0.16)',
+  'rgba(8,12,28,0.18)',
+];
+
+// Every wave has a name the HUD shows — the night tells its own story.
+export const WAVE_NAMES = [
+  'First Frost',
+  'The Pack Gathers',
+  'Stone and Snow',
+  'Howling Dark',
+  'The Rime Alpha',
+  'The Long Night',
+  'Golem March',
+  'The Wolf Tide',
+  'Storm Before Dawn',
+  'The Frost Matriarch',
 ];
 
 export const PALETTE = {
   night: '#0d1526',
+  ground: '#141d33',
+  plaza: '#202c47',
+  plazaEdge: '#31406a',
+  road: '#2a3a5f',
   snow: '#dfe9f5',
   snowDark: '#b9c9de',
   stone: '#8d99ae',
@@ -55,6 +75,7 @@ export const ENEMIES = {
   wraith: { name: 'Frost Wraith', hp: 30, speed: 42, radius: 13, reward: 6, leak: 4, score: 10, color: '#bfe6ff', core: '#eaf7ff' },
   wolf: { name: 'Frost Wolf', hp: 55, speed: 78, radius: 12, reward: 9, leak: 6, score: 15, color: '#8fd0ff', core: '#d6f0ff' },
   golem: { name: 'Ice Golem', hp: 220, speed: 24, radius: 20, reward: 20, leak: 12, score: 30, color: '#7fb8e8', core: '#cfeaff' },
+  alpha: { name: 'Rime Wolf Alpha', hp: 500, speed: 60, radius: 17, reward: 50, leak: 12, score: 80, color: '#c9a7ff', core: '#efe6ff' },
   matriarch: { name: 'The Frost Matriarch', hp: 1500, speed: 18, radius: 30, reward: 150, leak: 40, score: 300, color: '#d8b4fe', core: '#f3e8ff' },
 };
 
@@ -64,7 +85,7 @@ export const WAVES = [
   { wraith: 12, wolf: 3, golem: 0, matriarch: 0, interval: 1.4 },
   { wraith: 14, wolf: 6, golem: 1, matriarch: 0, interval: 1.25 },
   { wraith: 16, wolf: 9, golem: 2, matriarch: 0, interval: 1.15 },
-  { wraith: 20, wolf: 12, golem: 3, matriarch: 0, interval: 1.05 },
+  { wraith: 20, wolf: 12, golem: 3, alpha: 1, matriarch: 0, interval: 1.05 },
   { wraith: 22, wolf: 16, golem: 4, matriarch: 0, interval: 0.95 },
   { wraith: 24, wolf: 18, golem: 6, matriarch: 0, interval: 0.9 },
   { wraith: 26, wolf: 22, golem: 7, matriarch: 0, interval: 0.85 },

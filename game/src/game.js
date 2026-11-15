@@ -36,6 +36,9 @@ export function createGame(seed, audio) {
     shards: START_SHARDS,
     warmth: HEARTH_MAX_WARMTH,
     kills: 0,
+    combo: 0,
+    comboUntil: 0,
+    feed: [],
     leakedTotal: 0,
     enemies: [],
     bolts: [],
@@ -72,6 +75,7 @@ function say(g, text, seconds) {
 export function startWave(g) {
   if (g.wave >= TOTAL_WAVES) return;
   g.wave += 1;
+  g.combo = 0;
   g.spawnQueue = waveSpawnList(g.wave, g.random);
   g.spawnTimer = 0.5;
   g.screen = SCREEN_WAVE;
@@ -83,6 +87,7 @@ function endWave(g) {
   const bonus = WAVE_CLEAR_BONUS + g.wave * 10;
   g.score += bonus;
   g.shards += 12;
+  g.combo = 0;
   g.audio.waveClear();
   if (g.wave >= TOTAL_WAVES) {
     g.score += g.warmth * 5;
@@ -165,6 +170,7 @@ function updateBolts(g, dt) {
       b.y += Math.sin(ang) * b.speed * dt;
       if (Math.hypot(b.target.x - b.x, b.target.y - b.y) < b.target.def.radius + b.radius) {
         b.target.hp -= b.damage;
+        b.target.lastHitBy = b.from === 'cannon' ? 'Ember Cannon' : 'Keeper';
         b.target.flash = 0.12;
         burst(g.particles, b.target.x, b.target.y, '#ff9a3d', 6, 120);
         if (b.target.hp <= 0) b.target.dead = true;
@@ -178,6 +184,7 @@ function updateBolts(g, dt) {
         if (e.dead || e.leaked) continue;
         if (Math.hypot(e.x - b.x, e.y - b.y) < e.def.radius + b.radius) {
           e.hp -= b.damage;
+          e.lastHitBy = 'Keeper';
           e.flash = 0.12;
           e.burnUntil = Math.max(e.burnUntil, g.now + 0.8);
           e.burnDps = Math.max(e.burnDps, 6);
@@ -197,7 +204,18 @@ function resolveDeaths(g) {
     if (e.dead) {
       g.kills += 1;
       g.shards += e.def.reward;
-      g.score += e.def.score;
+      // Combo: kills within 2.5 s of each other build a multiplier, up to x3.
+      g.combo = g.now <= g.comboUntil ? g.combo + 1 : 1;
+      g.comboUntil = g.now + 2.5;
+      const mult = 1 + Math.min(g.combo - 1, 8) * 0.25;
+      g.score += Math.round(e.def.score * mult);
+      // The tale: who slew what, for the HUD's feed — short names, so the
+      // line fits the panel at a glance.
+      const killerShort = { Brazier: 'Brazier', 'Ember Cannon': 'Cannon', Keeper: 'Keeper' }[e.lastHitBy] || 'The hearth';
+      const preyShort = { wraith: 'Wraith', wolf: 'Wolf', golem: 'Golem', alpha: 'Alpha', matriarch: 'Matriarch' }[e.kind] || e.def.name;
+      const verb = killerShort === 'Brazier' ? 'scorched' : killerShort === 'Cannon' ? 'shattered' : 'slew';
+      g.feed.push(`${killerShort} ${verb} a ${preyShort}`);
+      if (g.feed.length > 3) g.feed.shift();
       burst(g.particles, e.x, e.y, e.def.color, 14, 140);
       floater(g.particles, e.x, e.y - 16, `+${e.def.reward}`, '#ffd76a');
       g.audio.kill();

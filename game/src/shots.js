@@ -50,17 +50,24 @@ export function stageShot(name, g, updateGame) {
   if (name === 'play') {
     startGame(g, 'Keeper');
     buildDefence(g);
-    // Stage wave 8 directly: wraiths, wolves and golems together, so the
-    // roads are full of creatures when the shutter falls. The loop below
-    // then plays it for real.
-    g.wave = 7;
+    // Stage the final wave — "The Frost Matriarch" — and put the boss
+    // first in the spawn queue, so the frame shows her with the boss bar
+    // while the rest of the wave is still marching in. The loop below
+    // then plays it for real; the real game still spawns her last.
+    g.wave = 9;
     startWave(g);
+    const bossAt = g.spawnQueue.findIndex((s) => s.kind === 'matriarch');
+    if (bossAt >= 0) {
+      const [bossSpawn] = g.spawnQueue.splice(bossAt, 1);
+      g.spawnQueue.unshift(bossSpawn);
+    }
     const aim = {
       ...IDLE_INPUT,
       mouse: { x: 700, y: 300, down: true, clicked: false, rightClicked: false },
     };
-    // Aim the keeper at the nearest creature each tick, for 20 real seconds.
-    for (let i = 0; i < 60 * 20; i += 1) {
+    // Wait until the Matriarch is on the field, keeper shooting the
+    // nearest creature meanwhile (5 real seconds at most).
+    for (let i = 0; i < 60 * 5 && g.screen === 'wave'; i += 1) {
       let best = null;
       let bestD = 1e9;
       for (const e of g.enemies) {
@@ -68,8 +75,31 @@ export function stageShot(name, g, updateGame) {
         if (d < bestD) { bestD = d; best = e; }
       }
       if (best) { aim.mouse.x = best.x; aim.mouse.y = best.y; }
+      if (g.enemies.some((e) => e.kind === 'matriarch')) break;
       updateGame(g, 1 / 60, aim);
-      if (g.screen !== 'wave') break;
+    }
+    // Ten seconds on the boss: the Keeper hunts the small fry near her
+    // (kills and combo for the frame) while the towers hammer her — the
+    // boss bar stays up because she is far from dead. Toll the bell once
+    // so the frozen march shows in the frame.
+    if (g.screen === 'wave') {
+      const bossAim = {
+        ...IDLE_INPUT,
+        mouse: { x: 640, y: 360, down: true, clicked: false, rightClicked: false },
+      };
+      for (let i = 0; i < 60 * 12 && g.screen === 'wave'; i += 1) {
+        let target = null;
+        let bestD = 1e9;
+        for (const e of g.enemies) {
+          if (e.kind === 'matriarch') continue;
+          const d = Math.hypot(e.x - g.keeper.x, e.y - g.keeper.y);
+          if (d < bestD) { bestD = d; target = e; }
+        }
+        if (!target) target = g.enemies.find((e) => e.kind === 'matriarch');
+        if (target) { bossAim.mouse.x = target.x; bossAim.mouse.y = target.y; }
+        bossAim.action = (n) => i === 0 && n === 'bell' && g.keeper.bellCooldown <= 0;
+        updateGame(g, 1 / 60, bossAim);
+      }
     }
     return { screen: 'wave' };
   }
@@ -77,9 +107,12 @@ export function stageShot(name, g, updateGame) {
     startGame(g, 'Keeper');
     buildDefence(g);
     g.wave = 10;
-    g.score = 2840;
-    g.kills = 187;
-    g.warmth = 62;
+    // A real night's numbers: seed 1's self-test victory, so the staged
+    // end screen shows what a won game actually scores.
+    g.score = 13824;
+    g.kills = 353;
+    g.warmth = 70;
+    g.feed = ['Cannon shattered a Matriarch', 'Brazier scorched a Golem', 'Keeper slew a Wolf'];
     g.message = '';
     g.screen = 'victory';
     return { screen: 'victory' };

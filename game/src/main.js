@@ -7,7 +7,7 @@
 // waves with a scripted strategy and reports SELFTEST ok (or ERR:) in the
 // document title, so a headless browser can check the game end to end.
 
-import { BEST_KEY, STEP } from './config.js';
+import { BEST_KEY, STEP, VIEW_W, VIEW_H } from './config.js';
 import { createAudio } from './audio.js';
 import { createInput, ACTION_CONFIRM } from './input.js';
 import { createGame, updateGame, runSelfTest } from './game.js';
@@ -23,6 +23,13 @@ const seedParam = Number.parseInt(params.get('seed') ?? '', 10);
 const seed = Number.isInteger(seedParam) ? seedParam : Math.floor(Math.random() * 4294967296);
 
 const canvas = document.getElementById('game');
+// 2x supersampling: the canvas paints at twice the logical resolution and
+// the browser downsamples it to the 1280x720 frame, so every edge in a
+// screenshot is antialiased instead of stair-stepped. The renderer scales
+// its context by 2, and input.js maps the mouse to logical coordinates, so
+// no game code ever sees the extra pixels.
+canvas.width = VIEW_W * 2;
+canvas.height = VIEW_H * 2;
 const audio = createAudio();
 const input = createInput(canvas);
 const game = createGame(seed, audio);

@@ -12,6 +12,7 @@ import { makeEnemy, waveSpawnList, updateEnemy } from './enemies.js';
 import { makeTower, updateTower, upgradeCost, canUpgrade } from './towers.js';
 import { makeKeeper, updateKeeper, tollBell } from './keeper.js';
 import { makeParticles, spawnSnow, updateParticles, burst, floater } from './particles.js';
+import { createVillage, updateVillage } from './village.js';
 
 export const SCREEN_TITLE = 'title';
 export const SCREEN_BUILD = 'build';
@@ -23,10 +24,11 @@ export const SCREEN_PAUSED = 'paused';
 export function createGame(seed, audio) {
   const random = createRandom(seed);
   const world = createWorld(random);
+  const village = createVillage();
   const particles = makeParticles(random);
   spawnSnow(particles, 160);
   return {
-    seed, random, world, particles, audio,
+    seed, random, world, village, particles, audio,
     screen: SCREEN_TITLE,
     prevScreen: SCREEN_BUILD,
     now: 0,
@@ -299,6 +301,10 @@ function requireWaveInterval(wave) {
 export function updateGame(g, dt, input) {
   g.now += dt;
   updateParticles(g.particles, dt, g.now, { x: 640, y: 360 });
+  // The village lives on its own clock: the sleigh circles the hearth
+  // whenever the game runs, and a loop pays out only while building or
+  // fighting — never on the title screen.
+  updateVillage(g, dt);
   if (g.messageUntil < g.now) g.message = '';
   if (input.action('mute')) {
     g.muted = g.audio.toggleMute();

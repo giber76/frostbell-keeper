@@ -8,6 +8,7 @@ import { isBossKind, bossBarLabel } from './bosses.js';
 import { LANES, lanePoint, laneLength } from './world.js';
 import { towerRange, towerDamage, upgradeCost, canUpgrade } from './towers.js';
 import { drawLightPools, drawNightVignette, drawHearthGlow, drawTowerGlow } from './light.js';
+import { drawVillage, drawVillagers, drawSleigh, drawPine } from './village.js';
 
 function rr(ctx, x, y, w, h, r) {
   ctx.beginPath();
@@ -47,6 +48,11 @@ function panel(ctx, x, y, w, h, title) {
 
 export function createRenderer(canvas) {
   const ctx = canvas.getContext('2d');
+  // 2x supersampling: the canvas paints at twice the logical resolution and
+  // the browser downsamples it to the 1280x720 frame, so every edge in a
+  // screenshot is antialiased instead of stair-stepped. All drawing code
+  // still works in 1280x720 logical coordinates.
+  ctx.scale(2, 2);
   return { draw(g) { drawGame(ctx, g); } };
 }
 
@@ -127,31 +133,8 @@ function drawBoard(ctx, g) {
     ctx.arc(gate.x, gate.y, 13, 0, Math.PI * 2);
     ctx.fill();
   }
-  // Pine trees in the corners.
-  for (const p of g.world.pines) {
-    const sway = Math.sin(now * 0.9 + p.sway) * 2;
-    ctx.fillStyle = PALETTE.pineDark;
-    ctx.beginPath();
-    ctx.moveTo(p.x - 16 * p.s, p.y + 14 * p.s);
-    ctx.lineTo(p.x + sway, p.y - 26 * p.s);
-    ctx.lineTo(p.x + 16 * p.s, p.y + 14 * p.s);
-    ctx.closePath();
-    ctx.fill();
-    ctx.fillStyle = PALETTE.pine;
-    ctx.beginPath();
-    ctx.moveTo(p.x - 12 * p.s, p.y + 6 * p.s);
-    ctx.lineTo(p.x + sway, p.y - 22 * p.s);
-    ctx.lineTo(p.x + 12 * p.s, p.y + 6 * p.s);
-    ctx.closePath();
-    ctx.fill();
-    ctx.fillStyle = '#eaf2ff';
-    ctx.beginPath();
-    ctx.moveTo(p.x - 8 * p.s, p.y - 2 * p.s);
-    ctx.lineTo(p.x + sway, p.y - 20 * p.s);
-    ctx.lineTo(p.x + 8 * p.s, p.y - 2 * p.s);
-    ctx.closePath();
-    ctx.fill();
-  }
+  // Pine trees in the corners, drawn by the village's shared pine.
+  for (const p of g.world.pines) drawPine(ctx, p.x, p.y, p.s, p.sway, now);
 }
 
 function drawHearth(ctx, g) {
@@ -421,6 +404,28 @@ function drawKeeper(ctx, k, now) {
   ctx.moveTo(k.x - 12, k.y + 12);
   ctx.quadraticCurveTo(k.x - 14, k.y - 8, k.x, k.y - 14);
   ctx.quadraticCurveTo(k.x + 14, k.y - 8, k.x + 12, k.y + 12);
+  ctx.closePath();
+  ctx.fill();
+  // Fur trim along the hem and hood, and a belt with a gold buckle — the
+  // Keeper dresses apart from the villagers, who each wear their own coat.
+  ctx.strokeStyle = '#e8dcc0';
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.moveTo(k.x - 11, k.y + 9);
+  ctx.quadraticCurveTo(k.x, k.y + 13, k.x + 11, k.y + 9);
+  ctx.stroke();
+  ctx.fillStyle = '#2c2118';
+  ctx.fillRect(k.x - 11, k.y - 1, 22, 3);
+  ctx.fillStyle = PALETTE.gold;
+  ctx.fillRect(k.x - 2, k.y - 1, 4, 3);
+  // A blue scarf, its tail waving on the clock.
+  const wave = Math.sin(now * 2.4) * 2;
+  ctx.fillStyle = '#2e5a8a';
+  ctx.fillRect(k.x - 7, k.y - 7, 14, 4);
+  ctx.beginPath();
+  ctx.moveTo(k.x - 2, k.y - 5);
+  ctx.quadraticCurveTo(k.x - 10, k.y + wave, k.x - 8, k.y + 8 + wave);
+  ctx.quadraticCurveTo(k.x - 4, k.y + 4, k.x - 1, k.y - 3);
   ctx.closePath();
   ctx.fill();
   // Hood + face.
@@ -765,6 +770,7 @@ function drawTitle(ctx, g) {
   text(ctx, '1–4 pick a tower, click a stone circle to build it · Snow Walls go on the glowing road markers', 640, 540, 13, PALETTE.ink);
   text(ctx, 'WASD walk · mouse aim · hold click to throw ember bolts · SPACE tolls the bell and freezes the march', 640, 562, 13, PALETTE.ink);
   text(ctx, `Creatures that reach the hearth steal its warmth. At 0 warmth the village freezes. Survive all ${TOTAL_WAVES} waves.`, 640, 584, 13, PALETTE.ink);
+  text(ctx, 'A supply sleigh circles the hearth — every loop brings shards. The villagers watch the night with you.', 640, 606, 13, PALETTE.dim);
   text(ctx, 'Press ENTER to begin', 640, 626, 14, PALETTE.gold, 'center', '700');
 }
 
@@ -807,6 +813,8 @@ function drawEnd(ctx, g, won) {
 
 function drawGame(ctx, g) {
   drawBoard(ctx, g);
+  // The village: houses, pines and window light, under everything that moves.
+  drawVillage(ctx, g);
   drawSlots(ctx, g);
   // The light pass: hearth, braziers and the Keeper's lantern, under all.
   drawLightPools(ctx, g);
@@ -831,7 +839,11 @@ function drawGame(ctx, g) {
   // Enemies, furthest first.
   const enemies = [...g.enemies].sort((a, b) => a.y - b.y);
   for (const e of enemies) drawEnemy(ctx, e, g.now);
+  // The villagers by the hearth, then the Keeper, then the sleigh circling
+  // past them all — the sleigh draws last so it is never hidden.
+  drawVillagers(ctx, g);
   drawKeeper(ctx, g.keeper, g.now);
+  drawSleigh(ctx, g);
   drawBolts(ctx, g);
   drawParticles(ctx, g);
   // Cold at the edges, warm at the centre — the vignette holds the eye

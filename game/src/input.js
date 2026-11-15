@@ -2,6 +2,8 @@
 // listens for game events itself, so a headless self-test can drive the same
 // code by writing into the same fields.
 
+import { VIEW_W, VIEW_H } from './config.js';
+
 export const ACTION_CONFIRM = 'confirm';
 export const ACTION_PAUSE = 'pause';
 export const ACTION_BELL = 'bell';
@@ -15,9 +17,11 @@ export function createInput(canvas) {
   const mouse = { x: 0, y: 0, down: false, clicked: false, rightClicked: false };
 
   function toLocal(e) {
+    // Map to logical 1280x720 coordinates, not the canvas's 2x backing
+    // store: the renderer supersamples, the game never sees the extra pixels.
     const rect = canvas.getBoundingClientRect();
-    const sx = canvas.width / rect.width;
-    const sy = canvas.height / rect.height;
+    const sx = VIEW_W / rect.width;
+    const sy = VIEW_H / rect.height;
     return { x: (e.clientX - rect.left) * sx, y: (e.clientY - rect.top) * sy };
   }
 

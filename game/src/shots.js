@@ -109,9 +109,9 @@ export function stageShot(name, g, updateGame) {
     g.wave = 16;
     // A real night's numbers: seed 1's self-test victory, so the staged
     // end screen shows what a won game actually scores.
-    g.score = 38847;
-    g.kills = 949;
-    g.warmth = 39;
+    g.score = 38709;
+    g.kills = 951;
+    g.warmth = 46;
     g.feed = ['Cannon shattered a Matriarch', 'Brazier scorched a Bulwark', 'Keeper slew a Wisp'];
     g.message = '';
     g.screen = 'victory';

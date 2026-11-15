@@ -58,6 +58,9 @@ export function createAudio() {
     unlock() { ensure(); },
     toggleMute() { muted = !muted; return muted; },
     get muted() { return muted; },
+    // One note, now, for the melody in music.js: the same guarded tone,
+    // public so the melody can play it on its own clock.
+    playNote(freq, dur, type, vol) { tone(freq, dur, type, vol); },
     shoot() { tone(720, 0.09, 'triangle', 0.07, 320); },
     hit() { noise(0.06, 0.06, 2400); },
     kill() { tone(520, 0.12, 'sine', 0.1, 780); tone(1040, 0.08, 'sine', 0.05, 1560); },

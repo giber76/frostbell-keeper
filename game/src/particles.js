@@ -22,10 +22,11 @@ export function spawnSnow(p, count) {
   }
 }
 
-export function updateParticles(p, dt, now, hearth) {
+export function updateParticles(p, dt, now, hearth, windDrift) {
+  const drift = windDrift || 0;
   for (const s of p.snow) {
     s.y += s.speed * dt;
-    s.x += (s.drift + Math.sin(now * 0.8 + s.phase) * 8) * dt;
+    s.x += (s.drift + drift + Math.sin(now * 0.8 + s.phase) * 8) * dt;
     if (s.y > 724) { s.y = -6; s.x = p.random.range(0, 1280); }
     if (s.x < -6) s.x = 1286;
     if (s.x > 1286) s.x = -6;

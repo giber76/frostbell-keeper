@@ -3,6 +3,15 @@
 
 import { TOWERS, UPGRADE_COST_FRACTION, UPGRADE_DAMAGE_FRACTION, MAX_TOWER_LEVEL } from './config.js';
 
+// The wind's hand on the towers: set once per wave from game.js, so a
+// tower's damage and range are the wind's as well as its own. Walls have
+// no damage or range, so the wind leaves them alone.
+let windFactors = { towerDamage: 1, towerRange: 1 };
+
+export function setWind(wind) {
+  windFactors = wind || { towerDamage: 1, towerRange: 1 };
+}
+
 export function towerCost(kind, level) {
   const base = TOWERS[kind].cost;
   if (level <= 1) return base;
@@ -15,11 +24,11 @@ export function upgradeCost(tower) {
 
 export function towerDamage(tower) {
   const base = TOWERS[tower.kind].damage;
-  return Math.round(base * (1 + UPGRADE_DAMAGE_FRACTION * (tower.level - 1)));
+  return Math.round(base * (1 + UPGRADE_DAMAGE_FRACTION * (tower.level - 1)) * (windFactors.towerDamage || 1));
 }
 
 export function towerRange(tower) {
-  return TOWERS[tower.kind].range + (tower.level - 1) * 12;
+  return Math.round((TOWERS[tower.kind].range + (tower.level - 1) * 12) * (windFactors.towerRange || 1));
 }
 
 export function makeTower(kind, x, y) {
@@ -92,6 +101,44 @@ export function updateTower(tower, dt, now, enemies, addBolt) {
         }
       }
       if (rang) events.push({ type: 'ring', x: tower.x, y: tower.y, range });
+    }
+    return events;
+  }
+  if (tower.kind === 'lantern') {
+    // A frost lantern does not fire: its cold light holds the march in
+    // its ring, a little at a time, as long as creatures stand in it.
+    if (tower.cooldown <= 0) {
+      tower.cooldown = def.rate;
+      const range = towerRange(tower);
+      let held = false;
+      for (const e of enemies) {
+        if (e.dead || e.leaked) continue;
+        if (Math.hypot(e.x - tower.x, e.y - tower.y) <= range) {
+          e.slowUntil = now + def.slowTime;
+          e.slowFactor = Math.min(e.slowFactor, def.slow);
+          held = true;
+        }
+      }
+      if (held) events.push({ type: 'ring', x: tower.x, y: tower.y, range });
+    }
+    return events;
+  }
+  if (tower.kind === 'mortar') {
+    // A shard mortar lobs one heavy shell at the furthest-along creature
+    // in its long range; the shell bursts over the crowd when it lands.
+    if (tower.cooldown <= 0) {
+      const target = pickTarget(tower, enemies);
+      if (target) {
+        tower.cooldown = def.rate;
+        tower.angle = Math.atan2(target.y - tower.y, target.x - tower.x);
+        tower.muzzle = 0.12;
+        addBolt({
+          x: tower.x, y: tower.y, target, speed: 380,
+          damage: towerDamage(tower), radius: 8, from: 'mortar',
+          splash: def.splash,
+        });
+        events.push({ type: 'shoot', x: tower.x, y: tower.y });
+      }
     }
     return events;
   }

@@ -77,6 +77,7 @@ export function updateVillage(g, dt) {
     v.sleigh.loops += 1;
     if (g.screen === 'build' || g.screen === 'wave') {
       g.shards += SLEIGH_SHARDS;
+      g.stats.shardsEarned += SLEIGH_SHARDS;
       const p = sleighPosition(v);
       floater(g.particles, p.x, p.y - 20, `+${SLEIGH_SHARDS} ◆ supply sleigh`, '#ffd76a');
       g.audio.coin();

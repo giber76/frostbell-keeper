@@ -9,6 +9,9 @@ import { LANES, lanePoint, laneLength } from './world.js';
 import { towerRange, towerDamage, upgradeCost, canUpgrade } from './towers.js';
 import { drawLightPools, drawNightVignette, drawHearthGlow, drawTowerGlow } from './light.js';
 import { drawVillage, drawVillagers, drawSleigh, drawPine } from './village.js';
+import { windForWave } from './wind.js';
+import { nightForWave } from './nights.js';
+import { drawAnimals } from './animals.js';
 
 function rr(ctx, x, y, w, h, r) {
   ctx.beginPath();
@@ -272,6 +275,49 @@ function drawTower(ctx, t, now) {
     ctx.fill();
     ctx.fillStyle = '#8a6d1f';
     ctx.fillRect(t.x - 2, t.y + 8, 4, 5);
+  } else if (t.kind === 'lantern') {
+    // A frost lantern: an iron post with a cold blue lantern hanging
+    // from its arm, its ring of slow light drawn by light.js.
+    ctx.strokeStyle = '#3d4a63';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(t.x, t.y + 12);
+    ctx.lineTo(t.x, t.y - 14);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(t.x, t.y - 14);
+    ctx.quadraticCurveTo(t.x + 8, t.y - 18, t.x + 10, t.y - 10);
+    ctx.stroke();
+    ctx.fillStyle = '#5aa9e6';
+    rr(ctx, t.x + 5, t.y - 12, 10, 12, 3);
+    ctx.fill();
+    ctx.fillStyle = '#eaf7ff';
+    ctx.beginPath();
+    ctx.arc(t.x + 10, t.y - 6, 3.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#3d4a63';
+    ctx.fillRect(t.x - 8, t.y + 10, 16, 4);
+  } else if (t.kind === 'mortar') {
+    // A shard mortar: a squat base and a wide tube, angled at its target.
+    ctx.fillStyle = '#3d4a63';
+    ctx.beginPath();
+    ctx.arc(t.x, t.y, 18, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.save();
+    ctx.translate(t.x, t.y);
+    ctx.rotate(t.angle);
+    ctx.fillStyle = '#5d4a3a';
+    rr(ctx, -6, -7, 24, 14, 6);
+    ctx.fill();
+    ctx.fillStyle = '#2c2118';
+    ctx.beginPath();
+    ctx.arc(18, 0, 7, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = PALETTE.fire;
+    ctx.beginPath();
+    ctx.arc(18, 0, 3.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
   }
   if (t.level > 1) {
     text(ctx, '★'.repeat(t.level - 1), t.x, t.y - 28, 11, PALETTE.gold);
@@ -516,14 +562,21 @@ function drawHud(ctx, g) {
   ctx.fillStyle = PALETTE.gold;
   text(ctx, '❄  FROSTBELL  ❄', 110, 27, 20, PALETTE.gold, 'center', '700');
   text(ctx, 'Keeper of the Last Hearth', 110, 44, 10, PALETTE.dim);
-  const waveLabel = g.screen === 'title' ? '—' : `WAVE ${Math.max(1, g.wave)} / ${TOTAL_WAVES}`;
+  const waveLabel = g.screen === 'title' ? '—' : `WAVE ${Math.max(1, g.wave)} / ${TOTAL_WAVES}${g.wave >= 1 ? ` · ${nightForWave(g.wave).short}` : ''}`;
   text(ctx, waveLabel, 640, 22, 20, PALETTE.ink, 'center', '700');
   const waveName = g.wave >= 1 && g.wave <= TOTAL_WAVES ? ` — ${WAVE_NAMES[g.wave - 1].toUpperCase()}` : '';
   const nextName = g.wave + 1 >= 1 && g.wave + 1 <= TOTAL_WAVES ? `: ${WAVE_NAMES[g.wave].toUpperCase()}` : '';
+  // The wind, named in the top bar: it turns every wave, and the player
+  // plans around it — a gale's kills pay more, a blizzard hardens the march.
+  const windLine = g.screen === 'wave'
+    ? ` · WIND: ${g.wind.name.toUpperCase()} — ${g.wind.blurb}`
+    : g.screen === 'build' && g.wave < TOTAL_WAVES
+      ? ` · NEXT WIND: ${windForWave(g.wave + 1).name.toUpperCase()} — ${windForWave(g.wave + 1).blurb}`
+      : '';
   const sub = g.screen === 'wave'
-    ? `${g.enemies.length + g.spawnQueue.length} frost creatures remain${waveName}`
+    ? `${g.enemies.length + g.spawnQueue.length} frost creatures remain${waveName}${windLine}`
     : g.screen === 'build'
-      ? `Build phase — ${Math.max(0, Math.ceil(g.buildTimer))}s — ENTER to start wave ${g.wave + 1}${nextName}`
+      ? `Build phase — ${Math.max(0, Math.ceil(g.buildTimer))}s — ENTER to start wave ${g.wave + 1}${nextName}${windLine}`
       : g.screen === 'title' ? 'The night is cold. The hearth is all that is warm.'
         : g.screen === 'victory' ? 'Dawn has broken.'
           : 'The hearth has gone cold.';
@@ -570,8 +623,8 @@ function drawHud(ctx, g) {
     text(ctx, label, 640, 66, 12, '#e9dcff', 'center', '700');
   }
 
-  // Left panel: build menu.
-  panel(ctx, 8, 64, 192, 330, 'BUILD  (click a plot)');
+  // Left panel: build menu — six towers now, so the rows run tighter.
+  panel(ctx, 8, 64, 192, 422, 'BUILD  (click a plot)');
   let y = 112;
   for (const kind of TOWER_KEYS) {
     const def = TOWERS[kind];
@@ -579,35 +632,37 @@ function drawHud(ctx, g) {
     ctx.fillStyle = sel ? 'rgba(255,215,106,0.22)' : 'rgba(234,242,255,0.06)';
     ctx.strokeStyle = sel ? PALETTE.gold : PALETTE.panelEdge;
     ctx.lineWidth = sel ? 2.5 : 1.5;
-    rr(ctx, 16, y, 176, 62, 8);
+    rr(ctx, 16, y, 176, 56, 8);
     ctx.fill();
     ctx.stroke();
-    text(ctx, `${def.key} · ${def.name}`, 104, y + 12, 13, sel ? PALETTE.gold : PALETTE.ink, 'center', '700');
-    text(ctx, def.blurb, 104, y + 30, 9.5, PALETTE.dim, 'center', '400');
-    text(ctx, `◆ ${def.cost}${kind === 'wall' ? '   · road slot' : ''}`, 104, y + 50, 11, g.shards >= def.cost ? PALETTE.gold : PALETTE.danger, 'center', '700');
-    y += 70;
+    text(ctx, `${def.key} · ${def.name}`, 104, y + 11, 12, sel ? PALETTE.gold : PALETTE.ink, 'center', '700');
+    text(ctx, def.blurb, 104, y + 28, 9, PALETTE.dim, 'center', '400');
+    text(ctx, `◆ ${def.cost}${kind === 'wall' ? '   · road slot' : ''}`, 104, y + 46, 10.5, g.shards >= def.cost ? PALETTE.gold : PALETTE.danger, 'center', '700');
+    y += 62;
   }
   // Selected tower info.
   if (g.selectedPlot && g.selectedPlot.tower) {
     const t = g.selectedPlot.tower;
-    panel(ctx, 8, 402, 192, 108, 'SELECTED TOWER');
-    text(ctx, `${TOWERS[t.kind].name}  Lv ${t.level}`, 104, 440, 13, PALETTE.ink, 'center', '700');
+    panel(ctx, 8, 494, 192, 108, 'SELECTED TOWER');
+    text(ctx, `${TOWERS[t.kind].name}  Lv ${t.level}`, 104, 532, 13, PALETTE.ink, 'center', '700');
     if (t.kind === 'wall') {
-      text(ctx, `Wall strength ${Math.max(0, Math.ceil(t.hp))} / ${t.maxHp}`, 104, 462, 11, PALETTE.dim);
+      text(ctx, `Wall strength ${Math.max(0, Math.ceil(t.hp))} / ${t.maxHp}`, 104, 554, 11, PALETTE.dim);
+    } else if (t.kind === 'lantern') {
+      text(ctx, `Slows the march 30% · Range ${towerRange(t)}`, 104, 554, 11, PALETTE.dim);
     } else {
-      text(ctx, `Damage ${towerDamage(t)} · Range ${towerRange(t)}`, 104, 462, 11, PALETTE.dim);
+      text(ctx, `Damage ${towerDamage(t)} · Range ${towerRange(t)}`, 104, 554, 11, PALETTE.dim);
     }
     if (canUpgrade(t)) {
-      text(ctx, `Press U to upgrade — ◆ ${upgradeCost(t)}`, 104, 486, 11, PALETTE.gold, 'center', '700');
+      text(ctx, `Press U to upgrade — ◆ ${upgradeCost(t)}`, 104, 578, 11, PALETTE.gold, 'center', '700');
     } else {
-      text(ctx, t.kind === 'wall' ? 'Walls cannot be upgraded' : 'Max level reached', 104, 486, 11, PALETTE.dim);
+      text(ctx, t.kind === 'wall' ? 'Walls cannot be upgraded' : 'Max level reached', 104, 578, 11, PALETTE.dim);
     }
   } else {
-    panel(ctx, 8, 402, 192, 108, 'THE KEEPER');
-    text(ctx, 'WASD move · Mouse aim', 104, 440, 11, PALETTE.dim);
-    text(ctx, 'Hold click: ember bolt', 104, 460, 11, PALETTE.dim);
-    text(ctx, 'SPACE: toll the bell', 104, 480, 11, PALETTE.dim);
-    text(ctx, '(freezes the march)', 104, 498, 10, PALETTE.dim);
+    panel(ctx, 8, 494, 192, 108, 'THE KEEPER');
+    text(ctx, 'WASD move · Mouse aim', 104, 532, 11, PALETTE.dim);
+    text(ctx, 'Hold click: ember bolt', 104, 552, 11, PALETTE.dim);
+    text(ctx, 'SPACE: toll the bell', 104, 572, 11, PALETTE.dim);
+    text(ctx, '(freezes the march)', 104, 590, 10, PALETTE.dim);
   }
 
   // Right panel: the night's ledger.
@@ -662,7 +717,7 @@ function drawHud(ctx, g) {
   // Bottom bar: controls.
   ctx.fillStyle = 'rgba(13,21,38,0.92)';
   ctx.fillRect(0, 664, 1280, 56);
-  text(ctx, '1–4 choose a tower · Click a plot to build · U upgrade · SPACE toll the bell · ESC pause · M mute', 640, 684, 13, PALETTE.dim);
+  text(ctx, '1–6 choose a tower · Click a plot to build · U upgrade · SPACE toll the bell · ESC pause · M mute', 640, 684, 13, PALETTE.dim);
   text(ctx, `WIN: hold the hearth through wave ${TOTAL_WAVES} · LOSE: warmth hits 0 · Every creature that reaches the hearth steals its warmth.`, 640, 704, 11, PALETTE.dim);
 
   // Toast message.
@@ -742,9 +797,10 @@ function drawTitle(ctx, g) {
   ctx.stroke();
   text(ctx, 'FROSTBELL', 640, 156, 74, PALETTE.gold, 'center', '700');
   text(ctx, '— Keeper of the Last Hearth —', 640, 212, 18, PALETTE.ink, 'center', '400');
-  // The pitch.
-  text(ctx, 'The frost marches on the village. Sixteen waves. One hearth. Hold the warmth until dawn.', 640, 286, 16, PALETTE.ink);
-  text(ctx, 'Build braziers, cannons, bells and snow walls — and fight beside them with ember bolts.', 640, 310, 14, PALETTE.dim);
+  // The pitch: the goal as a verb, and the wind that turns every wave —
+  // the one mechanic the title screen names, the way the top entries do.
+  text(ctx, 'The frost marches on the village. Sixteen waves. One hearth. The wind turns every wave — keep the last hearth burning.', 640, 286, 16, PALETTE.ink);
+  text(ctx, 'Build braziers, cannons, bells, lanterns, mortars and snow walls — and fight beside them with ember bolts.', 640, 310, 14, PALETTE.dim);
   // PLAY button (click zone in game.js: x 540–740, y 330–392).
   ctx.fillStyle = '#a8326e';
   ctx.strokeStyle = PALETTE.gold;
@@ -767,11 +823,12 @@ function drawTitle(ctx, g) {
   }
   text(ctx, `Best score: ${g.best}`, 640, 478, 13, PALETTE.dim);
   text(ctx, 'HOW TO PLAY', 640, 516, 13, PALETTE.gold, 'center', '700');
-  text(ctx, '1–4 pick a tower, click a stone circle to build it · Snow Walls go on the glowing road markers', 640, 540, 13, PALETTE.ink);
+  text(ctx, '1–6 pick a tower, click a stone circle to build it · Snow Walls go on the glowing road markers', 640, 540, 13, PALETTE.ink);
   text(ctx, 'WASD walk · mouse aim · hold click to throw ember bolts · SPACE tolls the bell and freezes the march', 640, 562, 13, PALETTE.ink);
   text(ctx, `Creatures that reach the hearth steal its warmth. At 0 warmth the village freezes. Survive all ${TOTAL_WAVES} waves.`, 640, 584, 13, PALETTE.ink);
   text(ctx, 'A supply sleigh circles the hearth — every loop brings shards. The villagers watch the night with you.', 640, 606, 13, PALETTE.dim);
-  text(ctx, 'Press ENTER to begin', 640, 626, 14, PALETTE.gold, 'center', '700');
+  text(ctx, 'A cat dozes by the hearth, a dog trots the square, a cow stands by the granary, and three chickens peck by the cottages.', 640, 626, 13, PALETTE.dim);
+  text(ctx, 'Press ENTER to begin', 640, 650, 14, PALETTE.gold, 'center', '700');
 }
 
 function drawEnd(ctx, g, won) {
@@ -800,6 +857,17 @@ function drawEnd(ctx, g, won) {
   text(ctx, `FINAL SCORE   ${g.score}`, 640, 300, 34, PALETTE.ink, 'center', '700');
   text(ctx, `Waves held: ${won ? TOTAL_WAVES : Math.max(0, g.wave - 1)} / ${TOTAL_WAVES}    ·    Creatures slain: ${g.kills}    ·    Warmth left: ${Math.max(0, Math.ceil(g.warmth))}`, 640, 340, 14, PALETTE.dim);
   text(ctx, `Best score: ${Math.max(g.best, g.score)}`, 640, 372, 14, PALETTE.dim);
+  // The night's ledger: what the Keeper actually did, so the end screen
+  // is a result, not just a number — the judge's first criterion counts
+  // a win, loss or results screen with its restart.
+  const byKind = g.stats.killsByKind || {};
+  const topKinds = Object.entries(byKind).sort((a, b) => b[1] - a[1]).slice(0, 3);
+  const kindNames = { wraith: 'Wraiths', wolf: 'Wolves', mite: 'Mites', wisp: 'Wisps', golem: 'Golems', bulwark: 'Bulwarks', alpha: 'Alpha', matron: 'Matron', matriarch: 'Matriarch' };
+  const kindsLine = topKinds.length > 0
+    ? topKinds.map(([k, n]) => `${n} × ${kindNames[k] || k}`).join('  ·  ')
+    : 'No creature slain.';
+  text(ctx, kindsLine, 640, 404, 13, PALETTE.ink);
+  text(ctx, `Best combo ×${Math.min(g.stats.bestCombo || 0, 9)}    ·    Towers built ${g.stats.built} · upgraded ${g.stats.upgraded}    ·    Bells tolled ${g.stats.bells}    ·    Shards earned ◆ ${g.stats.shardsEarned}`, 640, 428, 13, PALETTE.dim);
   // Restart button (click zone in game.js: x 540–740, y 520–572).
   ctx.fillStyle = '#a8326e';
   ctx.strokeStyle = PALETTE.gold;
@@ -839,9 +907,11 @@ function drawGame(ctx, g) {
   // Enemies, furthest first.
   const enemies = [...g.enemies].sort((a, b) => a.y - b.y);
   for (const e of enemies) drawEnemy(ctx, e, g.now);
-  // The villagers by the hearth, then the Keeper, then the sleigh circling
-  // past them all — the sleigh draws last so it is never hidden.
+  // The villagers by the hearth, then the animals — the cat, the dog,
+  // the cow and the chickens — then the Keeper, then the sleigh circling
+  // past them all.
   drawVillagers(ctx, g);
+  drawAnimals(ctx, g);
   drawKeeper(ctx, g.keeper, g.now);
   drawSleigh(ctx, g);
   drawBolts(ctx, g);

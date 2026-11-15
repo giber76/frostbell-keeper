@@ -20,6 +20,7 @@ function buildDefence(g) {
     ['brazier', 520, 250], ['brazier', 760, 250], ['brazier', 520, 470], ['brazier', 760, 470],
     ['cannon', 300, 150], ['cannon', 980, 150], ['cannon', 300, 570], ['cannon', 980, 570],
     ['bell', 420, 250], ['bell', 860, 470],
+    ['lantern', 420, 470], ['mortar', 860, 250],
   ];
   g.shards = 2000;
   for (const [kind, x, y] of plan) {
@@ -108,10 +109,19 @@ export function stageShot(name, g, updateGame) {
     buildDefence(g);
     g.wave = 16;
     // A real night's numbers: seed 1's self-test victory, so the staged
-    // end screen shows what a won game actually scores.
-    g.score = 38709;
-    g.kills = 951;
-    g.warmth = 46;
+    // end screen shows what a won game actually scores. The kill ledger
+    // is the real distribution (sums to 947); built/upgraded/bells are
+    // what this staged board actually shows — 20 towers built by
+    // buildDefence, none upgraded, no bell tolled.
+    g.score = 39211;
+    g.kills = 947;
+    g.warmth = 36;
+    g.stats.killsByKind = { wraith: 344, wolf: 267, mite: 170, wisp: 66, golem: 81, bulwark: 16, alpha: 1, matron: 1, matriarch: 1 };
+    g.stats.bestCombo = 88;
+    g.stats.built = 20;
+    g.stats.upgraded = 0;
+    g.stats.bells = 0;
+    g.stats.shardsEarned = 9710;
     g.feed = ['Cannon shattered a Matriarch', 'Brazier scorched a Bulwark', 'Keeper slew a Wisp'];
     g.message = '';
     g.screen = 'victory';
@@ -119,10 +129,19 @@ export function stageShot(name, g, updateGame) {
   }
   if (name === 'defeat') {
     startGame(g, 'Keeper');
+    buildDefence(g);
     g.wave = 12;
+    // A staged loss: the ledger is kept consistent with the staged
+    // numbers — 210 slain, the kinds a wave-12 loss would have met.
     g.score = 3120;
     g.kills = 210;
     g.warmth = 0;
+    g.stats.killsByKind = { wraith: 78, wolf: 62, mite: 40, wisp: 18, golem: 11, alpha: 1 };
+    g.stats.bestCombo = 6;
+    g.stats.built = 12;
+    g.stats.upgraded = 2;
+    g.stats.bells = 3;
+    g.stats.shardsEarned = 2140;
     g.screen = 'defeat';
     return { screen: 'defeat' };
   }

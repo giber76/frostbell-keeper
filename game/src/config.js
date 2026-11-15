@@ -1,8 +1,10 @@
 // FROSTBELL — Keeper of the Last Hearth: every tunable number lives here.
 // A winter hearth-defense game: frost creatures march down four snow roads
-// toward the village hearth. The Keeper places braziers, cannons, bells and
-// snow walls, and fights beside them with ember bolts, until dawn breaks
-// after wave 16 — or the last warmth is stolen and the village freezes.
+// toward the village hearth. The Keeper places braziers, cannons, bells,
+// frost lanterns, shard mortars and snow walls, and fights beside them with
+// ember bolts, until dawn breaks after wave 16 — or the last warmth is
+// stolen and the village freezes. The wind turns every wave, and the sixteen
+// waves are told in three nights.
 
 export const VIEW_W = 1280;
 export const VIEW_H = 720;
@@ -146,8 +148,19 @@ export const TOWERS = {
     key: '4', name: 'Snow Wall', cost: 25, range: 0, damage: 0, rate: 0, hp: 320,
     blurb: 'Blocks the road.',
   },
+  // New in v5: a cold lantern that slows the march in its ring, and a
+  // long-range mortar whose shards burst over a crowd. Six towers now —
+  // Emberline advertises six, and the build menu shows them all.
+  lantern: {
+    key: '5', name: 'Frost Lantern', cost: 45, range: 110, damage: 0, rate: 0.5, slow: 0.7, slowTime: 1.0,
+    blurb: 'Cold light slows the march.',
+  },
+  mortar: {
+    key: '6', name: 'Shard Mortar', cost: 60, range: 300, damage: 30, rate: 1.6, splash: 45,
+    blurb: 'Long-range shards that burst.',
+  },
 };
-export const TOWER_KEYS = ['brazier', 'cannon', 'bell', 'wall'];
+export const TOWER_KEYS = ['brazier', 'cannon', 'bell', 'wall', 'lantern', 'mortar'];
 export const UPGRADE_COST_FRACTION = 0.6;
 export const UPGRADE_DAMAGE_FRACTION = 0.6;
 export const MAX_TOWER_LEVEL = 3;

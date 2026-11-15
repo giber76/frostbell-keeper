@@ -9,10 +9,14 @@ import {
 import { createRandom } from './random.js';
 import { createWorld, pickSlot, pickTowerAt } from './world.js';
 import { makeEnemy, waveSpawnList, updateEnemy } from './enemies.js';
-import { makeTower, updateTower, upgradeCost, canUpgrade } from './towers.js';
+import { makeTower, updateTower, upgradeCost, canUpgrade, setWind } from './towers.js';
 import { makeKeeper, updateKeeper, tollBell } from './keeper.js';
 import { makeParticles, spawnSnow, updateParticles, burst, floater } from './particles.js';
 import { createVillage, updateVillage } from './village.js';
+import { windForWave } from './wind.js';
+import { nightForWave, nightEndsAt, NIGHT_BONUS_SHARDS } from './nights.js';
+import { createAnimals, updateAnimals } from './animals.js';
+import { createMelody } from './music.js';
 
 export const SCREEN_TITLE = 'title';
 export const SCREEN_BUILD = 'build';
@@ -25,14 +29,17 @@ export function createGame(seed, audio) {
   const random = createRandom(seed);
   const world = createWorld(random);
   const village = createVillage();
+  const animals = createAnimals();
+  const melody = createMelody(audio);
   const particles = makeParticles(random);
   spawnSnow(particles, 160);
   return {
-    seed, random, world, village, particles, audio,
+    seed, random, world, village, animals, melody, particles, audio,
     screen: SCREEN_TITLE,
     prevScreen: SCREEN_BUILD,
     now: 0,
     wave: 0,
+    wind: windForWave(1),
     score: 0,
     best: 0,
     shards: START_SHARDS,
@@ -51,7 +58,10 @@ export function createGame(seed, audio) {
     selectedPlot: null,
     message: '',
     messageUntil: 0,
-    stats: { boltsFired: 0, bells: 0, built: 0, upgraded: 0 },
+    stats: {
+      boltsFired: 0, bells: 0, built: 0, upgraded: 0,
+      killsByKind: {}, bestCombo: 0, shardsEarned: 0,
+    },
     difficulty: 'Keeper',
     muted: false,
   };
@@ -59,6 +69,9 @@ export function createGame(seed, audio) {
 
 export function startGame(g, difficulty) {
   g.difficulty = difficulty || 'Keeper';
+  // Stop the old melody before the fresh game brings its own, or two
+  // music-boxes would play over each other on every replay.
+  if (g.melody) g.melody.stop();
   const fresh = createGame(g.seed, g.audio);
   fresh.best = g.best;
   fresh.difficulty = g.difficulty;
@@ -66,6 +79,7 @@ export function startGame(g, difficulty) {
   g.screen = SCREEN_BUILD;
   g.wave = 0;
   g.buildTimer = BUILD_SECONDS;
+  g.melody.start();
   say(g, 'Build your defences — press ENTER when ready', 6);
 }
 
@@ -78,23 +92,39 @@ export function startWave(g) {
   if (g.wave >= TOTAL_WAVES) return;
   g.wave += 1;
   g.combo = 0;
+  // The wind turns: this wave's wind is set on the game and on the
+  // towers, so every shot, every march and every reward feels it.
+  g.wind = windForWave(g.wave);
+  setWind(g.wind);
   g.spawnQueue = waveSpawnList(g.wave, g.random);
   g.spawnTimer = 0.5;
   g.screen = SCREEN_WAVE;
   g.audio.horn();
-  say(g, `Wave ${g.wave} of ${TOTAL_WAVES} — they come for the hearth!`, 3);
+  say(g, `Wave ${g.wave} of ${TOTAL_WAVES} — ${g.wind.name}: ${g.wind.blurb}`, 4);
 }
 
 function endWave(g) {
   const bonus = WAVE_CLEAR_BONUS + g.wave * 10;
   g.score += bonus;
   g.shards += 12;
+  g.stats.shardsEarned += 12;
   g.combo = 0;
   g.audio.waveClear();
   if (g.wave >= TOTAL_WAVES) {
     g.score += g.warmth * 5;
     g.screen = SCREEN_VICTORY;
     g.audio.win();
+    return;
+  }
+  // Dawn breaks briefly between nights: a breath, a bonus, and the next
+  // night's name — the night is told in three chapters, not sixteen waves.
+  if (nightEndsAt(g.wave)) {
+    const next = nightForWave(g.wave + 1);
+    g.shards += NIGHT_BONUS_SHARDS;
+    g.stats.shardsEarned += NIGHT_BONUS_SHARDS;
+    g.screen = SCREEN_BUILD;
+    g.buildTimer = BUILD_SECONDS;
+    say(g, `Wave ${g.wave} held! Dawn breaks briefly — ${next.short}, ${next.title}. +${bonus} score, +${12 + NIGHT_BONUS_SHARDS} shards`, 5);
     return;
   }
   g.screen = SCREEN_BUILD;
@@ -158,6 +188,9 @@ export function tryUpgrade(g) {
 }
 
 function fireBolt(g, bolt) {
+  // The Keeper's own bolts ride the wind; tower bolts already carry it
+  // in their damage, so only the Keeper's are scaled here.
+  if (bolt.from === 'keeper') bolt.damage = Math.round(bolt.damage * g.wind.boltDamage);
   g.bolts.push({ ...bolt, alive: true, hit: false });
   g.stats.boltsFired += 1;
 }
@@ -172,10 +205,24 @@ function updateBolts(g, dt) {
       b.y += Math.sin(ang) * b.speed * dt;
       if (Math.hypot(b.target.x - b.x, b.target.y - b.y) < b.target.def.radius + b.radius) {
         b.target.hp -= b.damage;
-        b.target.lastHitBy = b.from === 'cannon' ? 'Ember Cannon' : 'Keeper';
+        b.target.lastHitBy = b.from === 'cannon' ? 'Ember Cannon' : b.from === 'mortar' ? 'Mortar' : 'Keeper';
         b.target.flash = 0.12;
         burst(g.particles, b.target.x, b.target.y, '#ff9a3d', 6, 120);
         if (b.target.hp <= 0) b.target.dead = true;
+        // A mortar shell bursts over the crowd: everything caught in its
+        // splash takes the same hit, and the tale names the Mortar.
+        if (b.from === 'mortar' && b.splash) {
+          burst(g.particles, b.target.x, b.target.y, '#ffd76a', 16, 180);
+          for (const e of g.enemies) {
+            if (e.dead || e.leaked || e === b.target) continue;
+            if (Math.hypot(e.x - b.target.x, e.y - b.target.y) <= b.splash) {
+              e.hp -= b.damage;
+              e.lastHitBy = 'Mortar';
+              e.flash = 0.12;
+              if (e.hp <= 0) e.dead = true;
+            }
+          }
+        }
         b.alive = false;
       }
     } else {
@@ -205,21 +252,26 @@ function resolveDeaths(g) {
   for (const e of g.enemies) {
     if (e.dead) {
       g.kills += 1;
-      g.shards += e.def.reward;
+      g.stats.killsByKind[e.kind] = (g.stats.killsByKind[e.kind] || 0) + 1;
+      // The wind pays: a gale's kills are worth more, a dawn wind more still.
+      const reward = Math.round(e.def.reward * g.wind.shardBonus);
+      g.shards += reward;
+      g.stats.shardsEarned += reward;
       // Combo: kills within 2.5 s of each other build a multiplier, up to x3.
       g.combo = g.now <= g.comboUntil ? g.combo + 1 : 1;
+      g.stats.bestCombo = Math.max(g.stats.bestCombo, g.combo);
       g.comboUntil = g.now + 2.5;
       const mult = 1 + Math.min(g.combo - 1, 8) * 0.25;
       g.score += Math.round(e.def.score * mult);
       // The tale: who slew what, for the HUD's feed — short names, so the
       // line fits the panel at a glance.
-      const killerShort = { Brazier: 'Brazier', 'Ember Cannon': 'Cannon', Keeper: 'Keeper' }[e.lastHitBy] || 'The hearth';
+      const killerShort = { Brazier: 'Brazier', 'Ember Cannon': 'Cannon', Mortar: 'Mortar', Keeper: 'Keeper' }[e.lastHitBy] || 'The hearth';
       const preyShort = { wraith: 'Wraith', wolf: 'Wolf', mite: 'Mite', wisp: 'Wisp', golem: 'Golem', bulwark: 'Bulwark', alpha: 'Alpha', matron: 'Matron', matriarch: 'Matriarch' }[e.kind] || e.def.name;
-      const verb = killerShort === 'Brazier' ? 'scorched' : killerShort === 'Cannon' ? 'shattered' : 'slew';
+      const verb = killerShort === 'Brazier' ? 'scorched' : killerShort === 'Cannon' ? 'shattered' : killerShort === 'Mortar' ? 'burst' : 'slew';
       g.feed.push(`${killerShort} ${verb} a ${preyShort}`);
       if (g.feed.length > 3) g.feed.shift();
       burst(g.particles, e.x, e.y, e.def.color, 14, 140);
-      floater(g.particles, e.x, e.y - 16, `+${e.def.reward}`, '#ffd76a');
+      floater(g.particles, e.x, e.y - 16, `+${reward}`, '#ffd76a');
       g.audio.kill();
     } else if (e.leaked) {
       g.warmth -= e.def.leak;
@@ -263,8 +315,11 @@ function updateWavePlay(g, dt, input) {
       const next = g.spawnQueue.shift();
       const waveScale = g.difficulty === 'Gentle' ? 0.85 : g.difficulty === 'Scorched' ? 1.2 : 1;
       const enemy = makeEnemy(next.kind, next.lane, g.wave, g.random);
-      enemy.hp = Math.round(enemy.hp * waveScale);
+      // The wind walks with the march: faster in a gale, harder in a
+      // blizzard, and the Keeper's favour in a dawn wind.
+      enemy.hp = Math.round(enemy.hp * waveScale * g.wind.enemyHp);
       enemy.maxHp = enemy.hp;
+      enemy.speed *= g.wind.enemySpeed;
       g.enemies.push(enemy);
       g.spawnTimer = Math.max(0.35, (requireWaveInterval(g.wave)) * (0.9 + g.random.next() * 0.2));
     }
@@ -300,11 +355,14 @@ function requireWaveInterval(wave) {
 
 export function updateGame(g, dt, input) {
   g.now += dt;
-  updateParticles(g.particles, dt, g.now, { x: 640, y: 360 });
+  // The snow itself feels the wind: a gale drives it sideways across the
+  // square, a still night lets it fall straight down.
+  updateParticles(g.particles, dt, g.now, { x: 640, y: 360 }, g.wind.snowDrift);
   // The village lives on its own clock: the sleigh circles the hearth
   // whenever the game runs, and a loop pays out only while building or
-  // fighting — never on the title screen.
+  // fighting — never on the title screen. The dog trots its circle too.
   updateVillage(g, dt);
+  updateAnimals(g, dt);
   if (g.messageUntil < g.now) g.message = '';
   if (input.action('mute')) {
     g.muted = g.audio.toggleMute();
@@ -385,6 +443,7 @@ export function runSelfTest(g) {
       ['cannon', 300, 150], ['cannon', 980, 150], ['cannon', 300, 570], ['cannon', 980, 570],
       ['cannon', 420, 570], ['cannon', 860, 570],
       ['bell', 420, 250], ['bell', 860, 470], ['bell', 300, 250],
+      ['lantern', 420, 470], ['mortar', 860, 250],
     ];
     // Grant the test enough shards to build the plan (the real game earns them).
     g.shards = 1000;
@@ -453,6 +512,14 @@ export function runSelfTest(g) {
       score: g.score,
       warmth: g.warmth,
       steps,
+      // The night's ledger, so a staged end screen can show the real
+      // numbers a won game actually posts — never invented ones.
+      killsByKind: g.stats.killsByKind,
+      bestCombo: g.stats.bestCombo,
+      built: g.stats.built,
+      upgraded: g.stats.upgraded,
+      bells: g.stats.bells,
+      shardsEarned: g.stats.shardsEarned,
       errors,
     };
   } catch (err) {

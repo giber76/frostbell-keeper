@@ -3,13 +3,15 @@
 // defeat. All HUD is drawn on the canvas, so a screenshot always shows the
 // whole game. Coordinates here must match the click zones in game.js.
 
-import { BOARD, HEARTH, PALETTE, TOWERS, TOWER_KEYS, TOTAL_WAVES, NIGHT_TINT, KEEPER, WAVE_NAMES, ENEMIES, WAVES, SWEEP, BOONS, REROLL_COST } from './config.js';
+import { BOARD, HEARTH, PALETTE, TOWERS, TOWER_KEYS, TOTAL_WAVES, NIGHT_TINT, KEEPER, WAVE_NAMES, ENEMIES, WAVES, SWEEP, BOONS, REROLL_COST, WARD, MOON } from './config.js';
 import { isBossKind, bossBarLabel } from './bosses.js';
 import { LANES, lanePoint, laneLength } from './world.js';
 import { towerRange, towerDamage, upgradeCost, canUpgrade } from './towers.js';
 import { drawLightPools, drawNightVignette, drawHearthGlow, drawTowerGlow } from './light.js';
 import { drawVillage, drawVillagers, drawSleigh, drawPine } from './village.js';
 import { windForWave } from './wind.js';
+import { moonRegionName } from './moon.js';
+import { wardLength, wardCost } from './wards.js';
 import { nightForWave } from './nights.js';
 import { drawAnimals } from './animals.js';
 import { boonCardRect, boonSummary, rerollButtonRect } from './boons.js';
@@ -563,6 +565,101 @@ function drawSweepCone(ctx, g) {
   ctx.fill();
 }
 
+// The moon (v7): a pale disc in the sky and the band of silver light it
+// lays across the square. The band is drawn over the ground but under
+// everything that stands on it, so the lit ground reads as ground, and
+// the disc hangs above the board's top edge — the frame always shows
+// where the light is, and it moves every wave.
+function drawMoonBand(ctx, g) {
+  const m = g.moon;
+  if (!m || g.screen === 'title') return;
+  const x0 = m.x - MOON.bandHalfWidth;
+  const x1 = m.x + MOON.bandHalfWidth;
+  ctx.fillStyle = 'rgba(190,215,255,0.07)';
+  ctx.fillRect(x0, BOARD.y, x1 - x0, BOARD.h);
+  const edge = ctx.createLinearGradient(x0 - 30, 0, x0 + 30, 0);
+  edge.addColorStop(0, 'rgba(190,215,255,0)');
+  edge.addColorStop(1, 'rgba(190,215,255,0.05)');
+  ctx.fillStyle = edge;
+  ctx.fillRect(x0 - 30, BOARD.y, 60, BOARD.h);
+  const edge2 = ctx.createLinearGradient(x1 - 30, 0, x1 + 30, 0);
+  edge2.addColorStop(0, 'rgba(190,215,255,0.05)');
+  edge2.addColorStop(1, 'rgba(190,215,255,0)');
+  ctx.fillStyle = edge2;
+  ctx.fillRect(x1 - 30, BOARD.y, 60, BOARD.h);
+}
+
+function drawMoon(ctx, g) {
+  const m = g.moon;
+  if (!m || g.screen === 'title') return;
+  const glow = ctx.createRadialGradient(m.x, m.y, 4, m.x, m.y, 64);
+  glow.addColorStop(0, 'rgba(235,242,255,0.85)');
+  glow.addColorStop(0.4, 'rgba(210,228,255,0.28)');
+  glow.addColorStop(1, 'rgba(210,228,255,0)');
+  ctx.fillStyle = glow;
+  ctx.beginPath();
+  ctx.arc(m.x, m.y, 64, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#eef4ff';
+  ctx.beginPath();
+  ctx.arc(m.x, m.y, 24, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = 'rgba(180,198,228,0.8)';
+  ctx.beginPath();
+  ctx.arc(m.x - 7, m.y - 4, 4.5, 0, Math.PI * 2);
+  ctx.arc(m.x + 8, m.y + 6, 3.5, 0, Math.PI * 2);
+  ctx.arc(m.x + 3, m.y - 10, 2.5, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function strokeWardLine(ctx, pts, width, color) {
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width;
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(pts[0].x, pts[0].y);
+  for (let i = 1; i < pts.length; i += 1) ctx.lineTo(pts[i].x, pts[i].y);
+  ctx.stroke();
+}
+
+// Ember wards (v7): the lines the Keeper laid, glowing gold on the snow
+// — a wide soft halo, a bright core, and a shimmer that runs along the
+// line, so a ward reads as light lying on the road, not as a painted
+// stripe. A ward in its last three seconds fades, so the player sees
+// when the light is about to go out.
+function drawWards(ctx, g) {
+  const now = g.now;
+  for (const w of g.wards) {
+    const left = w.until - now;
+    if (left <= 0) continue;
+    const fade = left < 3 ? Math.max(0.15, left / 3) : 1;
+    const pts = w.points;
+    if (pts.length < 2) continue;
+    strokeWardLine(ctx, pts, 14, `rgba(255,190,80,${0.16 * fade})`);
+    strokeWardLine(ctx, pts, 4.5, `rgba(255,215,106,${0.9 * fade})`);
+    ctx.save();
+    ctx.setLineDash([6, 14]);
+    ctx.lineDashOffset = -now * 30;
+    strokeWardLine(ctx, pts, 2, `rgba(255,240,180,${0.7 * fade})`);
+    ctx.restore();
+  }
+  // The drag in progress: a dashed preview of the line being traced,
+  // with its price beside the pen, so the Keeper knows what the ward
+  // will cost before letting go.
+  if (g.ward && g.ward.drawing && g.ward.points.length >= 2) {
+    const pts = g.ward.points;
+    ctx.save();
+    ctx.setLineDash([8, 8]);
+    strokeWardLine(ctx, pts, 3, 'rgba(255,215,106,0.8)');
+    ctx.restore();
+    const len = wardLength(pts);
+    const cost = wardCost(len);
+    const last = pts[pts.length - 1];
+    text(ctx, `WARD ◆ ${cost}`, last.x + 8, last.y - 18, 13, cost <= g.shards ? PALETTE.gold : PALETTE.danger, 'left', '700');
+  }
+}
+
 function drawBolts(ctx, g) {
   for (const b of g.bolts) {
     const glow = ctx.createRadialGradient(b.x, b.y, 1, b.x, b.y, 14);
@@ -624,8 +721,10 @@ function drawHud(ctx, g) {
   const nextName = g.wave + 1 >= 1 && g.wave + 1 <= TOTAL_WAVES ? `: ${WAVE_NAMES[g.wave].toUpperCase()}` : '';
   // The wind, named in the top bar: it turns every wave, and the player
   // plans around it — a gale's kills pay more, a blizzard hardens the march.
+  // The moon (v7) rides beside it: the band's place is named too, so the
+  // frame always says where the strong ground stands.
   const windLine = g.screen === 'wave'
-    ? ` · WIND: ${g.wind.name.toUpperCase()} — ${g.wind.blurb}`
+    ? ` · WIND: ${g.wind.name.toUpperCase()} · MOON OVER ${g.moon ? moonRegionName(g.moon).toUpperCase() : 'THE NIGHT'} — TOWERS THERE +25%`
     : g.screen === 'build' && g.wave < TOTAL_WAVES
       ? ` · NEXT WIND: ${windForWave(g.wave + 1).name.toUpperCase()} — ${windForWave(g.wave + 1).blurb}`
       : '';
@@ -716,7 +815,7 @@ function drawHud(ctx, g) {
       text(ctx, t.kind === 'wall' ? 'Walls cannot be upgraded' : 'Max level reached', 104, 578, 11, PALETTE.dim);
     }
   } else {
-    panel(ctx, 8, 494, 192, 108, 'THE KEEPER');
+    panel(ctx, 8, 494, 192, 126, 'THE KEEPER');
     text(ctx, 'WASD move · Mouse aim', 104, 530, 11, PALETTE.dim);
     text(ctx, 'Hold click: ember bolt', 104, 548, 11, PALETTE.dim);
     text(ctx, 'Hold right-click: lantern sweep', 104, 566, 11, PALETTE.dim);
@@ -731,6 +830,8 @@ function drawHud(ctx, g) {
       ctx.fill();
     }
     text(ctx, `OIL ${g.keeper ? Math.ceil(g.keeper.oil) : 100}`, 104, 584, 10, '#fff', 'center', '700');
+    // Ember wards (v7): the ward tool, and whether it is open.
+    text(ctx, g.ward.tool ? 'V ward tool ON — drag to draw light' : 'V ward tool · drag a line of light', 104, 604, 11, g.ward.tool ? PALETTE.gold : PALETTE.dim);
   }
 
   // Right panel: the night's ledger.
@@ -788,7 +889,7 @@ function drawHud(ctx, g) {
   if (g.screen !== 'title') {
     ctx.fillStyle = 'rgba(13,21,38,0.92)';
     ctx.fillRect(0, 664, 1280, 56);
-    text(ctx, '1–6 choose a tower · Click a plot to build · U upgrade · SPACE toll the bell · Right-click hold: lantern sweep · ESC pause · M mute', 640, 684, 13, PALETTE.dim);
+    text(ctx, '1–6 choose a tower · Click a plot to build · U upgrade · SPACE toll the bell · Right-click hold: lantern sweep · V ward: drag to draw light · ESC pause · M mute', 640, 684, 13, PALETTE.dim);
     text(ctx, `WIN: hold the hearth through wave ${TOTAL_WAVES} · LOSE: warmth hits 0 · Every creature that reaches the hearth steals its warmth.`, 640, 704, 11, PALETTE.dim);
   }
 
@@ -873,7 +974,7 @@ function drawTitle(ctx, g) {
   text(ctx, '— Keeper of the Last Hearth —', 640, 212, 18, PALETTE.ink, 'center', '400');
   // The pitch: the goal as a verb, and the wind that turns every wave —
   // the one mechanic the title screen names, the way the top entries do.
-  text(ctx, 'The frost marches on the village. Ten nights. Sixteen waves. One hearth. The wind turns every wave — keep the last hearth burning.', 640, 286, 16, PALETTE.ink);
+  text(ctx, 'The frost marches on the village. Ten nights. Sixteen waves. One hearth. Wind turns, moon crosses the sky — keep the last hearth burning.', 640, 286, 16, PALETTE.ink);
   text(ctx, 'Build braziers, cannons, bells, lanterns, mortars and snow walls — sweep your lantern across the march, and choose a dawn blessing after every wave.', 640, 310, 14, PALETTE.dim);
   // PLAY button (click zone in game.js: x 540–740, y 330–392).
   ctx.fillStyle = '#a8326e';
@@ -903,7 +1004,7 @@ function drawTitle(ctx, g) {
   text(ctx, `After every wave the dawn offers three blessings — click a card, or press 7, 8 or 9, to take one · R rerolls them for ${REROLL_COST} shards`, 640, 604, 13, PALETTE.ink);
   text(ctx, `Creatures that reach the hearth steal its warmth. At 0 warmth the village freezes. Survive all ${TOTAL_WAVES} waves, across ten nights.`, 640, 624, 13, PALETTE.ink);
   text(ctx, 'A supply sleigh circles the hearth — every loop brings shards. The villagers watch the night with you.', 640, 644, 13, PALETTE.dim);
-  text(ctx, 'A cat dozes by the hearth, a dog trots the square, a cow stands by the granary, and three chickens peck by the cottages.', 640, 662, 13, PALETTE.dim);
+  text(ctx, 'Press V for the ward tool, then drag the mouse to draw a line of light across a road — it burns and slows the march for twelve seconds.', 640, 662, 13, PALETTE.ink);
   text(ctx, 'Press ENTER to begin', 640, 690, 14, PALETTE.gold, 'center', '700');
 }
 
@@ -948,7 +1049,7 @@ function drawEnd(ctx, g, won) {
     ? topKinds.map(([k, n]) => `${n} × ${kindNames[k] || k}`).join('  ·  ')
     : 'No creature slain.';
   text(ctx, kindsLine, 640, 404, 13, PALETTE.ink);
-  text(ctx, `Best combo ×${Math.min(g.stats.bestCombo || 0, 9)}    ·    Towers built ${g.stats.built} · upgraded ${g.stats.upgraded}    ·    Bells tolled ${g.stats.bells}    ·    Shards earned ◆ ${g.stats.shardsEarned}`, 640, 428, 13, PALETTE.dim);
+  text(ctx, `Best combo ×${Math.min(g.stats.bestCombo || 0, 9)}    ·    Towers built ${g.stats.built} · upgraded ${g.stats.upgraded}    ·    Bells tolled ${g.stats.bells}    ·    Wards drawn ${g.stats.wardsDrawn || 0}    ·    Shards earned ◆ ${g.stats.shardsEarned}`, 640, 428, 13, PALETTE.dim);
   // The blessings, split over two lines so the panel holds them all.
   if (heldBoons.length > 0) {
     const line = (list) => list.map((b) => `${b.name}${b.n > 1 ? ` ×${b.n}` : ''}`).join('  ·  ');
@@ -1022,8 +1123,11 @@ function drawGame(ctx, g) {
   // The village: houses, pines and window light, under everything that moves.
   drawVillage(ctx, g);
   drawSlots(ctx, g);
+  // The moon's band (v7): silver light on the ground, under all that stands on it.
+  drawMoonBand(ctx, g);
   // The light pass: hearth, braziers and the Keeper's lantern, under all.
   drawLightPools(ctx, g);
+  drawMoon(ctx, g);
   drawHearth(ctx, g);
   // Towers, sorted so lower ones draw later.
   const towers = [];
@@ -1051,6 +1155,8 @@ function drawGame(ctx, g) {
   drawVillagers(ctx, g);
   drawAnimals(ctx, g);
   drawKeeper(ctx, g.keeper, g.now);
+  // Ember wards (v7): the lines the Keeper laid, glowing on the roads.
+  drawWards(ctx, g);
   drawSweepCone(ctx, g);
   drawSleigh(ctx, g);
   drawBolts(ctx, g);

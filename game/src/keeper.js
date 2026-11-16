@@ -15,7 +15,7 @@ export function makeKeeper() {
   };
 }
 
-export function updateKeeper(k, dt, input, addBolt, audio, canSweep) {
+export function updateKeeper(k, dt, input, addBolt, audio, canSweep, canShoot) {
   let mx = 0;
   let my = 0;
   if (input.down('w', 'arrowup')) my -= 1;
@@ -51,7 +51,10 @@ export function updateKeeper(k, dt, input, addBolt, audio, canSweep) {
     k.oil = Math.min(k.oilMax, k.oil + SWEEP.refillPerSecond * dt);
     if (k.oilLocked && k.oil >= SWEEP.rechargeAt) k.oilLocked = false;
   }
-  if (input.mouse.down && k.cooldown <= 0) {
+  // The Keeper's bolts: held click throws them — unless the ward tool
+  // (v7) is open, when the Keeper's hands are busy drawing light
+  // instead of throwing it.
+  if (input.mouse.down && k.cooldown <= 0 && canShoot !== false) {
     k.cooldown = KEEPER.boltRate;
     addBolt({
       x: k.x + Math.cos(k.angle) * 18, y: k.y + Math.sin(k.angle) * 18,

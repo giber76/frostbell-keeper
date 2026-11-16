@@ -5,6 +5,7 @@
 import { startGame, startWave, tryBuild } from './game.js';
 import { pickSlot } from './world.js';
 import { offerBoons } from './boons.js';
+import { beginWard, extendWard, endWard } from './wards.js';
 
 const IDLE_INPUT = {
   keys: new Set(), pressed: new Set(),
@@ -114,6 +115,15 @@ export function stageShot(name, g, updateGame) {
         bossAim.action = (n) => i === 0 && n === 'bell' && g.keeper.bellCooldown <= 0;
         updateGame(g, 1 / 60, bossAim);
       }
+      // Ember wards (v7): lay one across the east road, where the march
+      // is thickest, so the frame shows the line of light burning the
+      // road — drawn through the real code path, with real shards, and
+      // lying in the moon's band (wave 16's moon stands over the east).
+      if (g.shards >= 30) {
+        beginWard(g, 780, 360);
+        for (let x = 800; x <= 1060; x += 20) extendWard(g, x, 360);
+        endWard(g);
+      }
       // The frame must show the sweep: the twelve seconds of holding it
       // may have run the oil dry, so refill the lantern and hold the
       // cone open for the capture — a real state (full oil, sweeping),
@@ -128,25 +138,26 @@ export function stageShot(name, g, updateGame) {
     startGame(g, 'Keeper');
     buildDefence(g);
     g.wave = 16;
-    // A real night's numbers: seed 1's self-test victory, so the staged
+    // A real night's numbers: seed 1's v7 self-test victory, so the staged
     // end screen shows what a won game actually scores. The kill ledger
-    // is the real distribution (sums to 947); built/upgraded/bells are
-    // what this staged board actually shows — 20 towers built by
-    // buildDefence, none upgraded, no bell tolled.
-    g.score = 39211;
-    g.kills = 947;
-    g.warmth = 36;
-    g.stats.killsByKind = { wraith: 344, wolf: 267, mite: 170, wisp: 66, golem: 81, bulwark: 16, alpha: 1, matron: 1, matriarch: 1 };
-    g.stats.bestCombo = 88;
-    g.stats.built = 20;
-    g.stats.upgraded = 0;
-    g.stats.bells = 0;
-    g.stats.shardsEarned = 9710;
+    // is the real distribution (sums to 957); built/upgraded/bells/wards
+    // are what the self-test actually posted — 29 towers built, 38
+    // upgrades, 67 bells tolled, 16 ember wards drawn, one a wave.
+    g.score = 40449;
+    g.kills = 957;
+    g.warmth = 100;
+    g.stats.killsByKind = { wraith: 346, wolf: 268, mite: 172, wisp: 68, golem: 83, bulwark: 17, alpha: 1, matron: 1, matriarch: 1 };
+    g.stats.bestCombo = 86;
+    g.stats.built = 29;
+    g.stats.upgraded = 38;
+    g.stats.bells = 67;
+    g.stats.wardsDrawn = 16;
+    g.stats.shardsEarned = 9986;
     // Fifteen waves held means fifteen dawn blessings taken — a real
     // night's ledger, grouped by the end screen into kinds and counts.
     g.boon.held = ['emberHeart', 'emberHeart', 'kindling', 'kindling', 'ironWalls', 'swiftHands', 'deepPockets', 'longFuse', 'frostbiteRounds', 'lanternOil', 'emberHeart', 'kindling', 'ironWalls', 'deepPockets', 'swiftHands'];
     g.stats.boonsTaken = 15;
-    g.feed = ['Cannon shattered a Matriarch', 'Brazier scorched a Bulwark', 'Keeper slew a Wisp'];
+    g.feed = ['Cannon shattered a Matriarch', 'Ward warded a Bulwark', 'Keeper slew a Wisp'];
     g.message = '';
     g.screen = 'victory';
     return { screen: 'victory' };

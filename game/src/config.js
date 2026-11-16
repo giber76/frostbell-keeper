@@ -4,9 +4,11 @@
 // frost lanterns, shard mortars and snow walls, and fights beside them with
 // ember bolts — and, since v6, sweeps the lantern's light across the
 // march — until dawn breaks after wave 16 — or the last warmth is
-// stolen and the village freezes. The wind turns every wave, the sixteen
-// waves are told in ten nights, and after every wave the dawn offers the
-// Keeper a choice of three blessings.
+// stolen and the village freezes. The wind turns every wave, the moon
+// crosses the sky as the waves pass, the sixteen waves are told in ten
+// nights, and after every wave the dawn offers the Keeper a choice of
+// three blessings. Since v7 the Keeper also draws ember wards: lines of
+// light traced with the mouse, laid across the roads to burn the march.
 
 export const VIEW_W = 1280;
 export const VIEW_H = 720;
@@ -206,6 +208,40 @@ export const BOONS = {
 // Turning the dawn (v6): STORMKEEPER's reroll, the one top-10 edge the
 // dawn did not have. Once per offer, the three cards are drawn again.
 export const REROLL_COST = 15;
+
+// The Moon Turns (v7): SUNWRIGHT's moving sun, in our own sky. The moon
+// crosses the square as the waves pass — low in the east on the first wave,
+// high over the hearth by the last — and the band of moonlight under it
+// is where the defence strikes hardest: towers standing in the band fire
+// a quarter harder, the Keeper's bolts bite a quarter deeper, and the
+// frost caught in the silver light walks slower. The band moves every
+// wave, so the strong ground moves with it — no two waves play the same,
+// and the frame always shows where the light is.
+export const MOON = {
+  bandHalfWidth: 150,
+  towerMult: 1.25,
+  keeperMult: 1.25,
+  slow: 0.9,
+};
+
+// Ember Wards (v7): MARGINALIA's drawn verb, in light instead of ink.
+// Press V for the ward tool, then drag the mouse to trace a line of light
+// across the board and release to lay it: a ward is one stroke, at most
+// 360 px, costing a shard per 10 px (at least 8, at most 36), and it
+// burns and slows every creature that touches it for twelve seconds.
+// Four wards at most; a fifth lays the oldest to rest.
+export const WARD = {
+  costPerPx: 1 / 10,
+  minCost: 8,
+  maxCost: 36,
+  maxLength: 360,
+  minLength: 40,
+  maxWards: 4,
+  lifetime: 12,
+  burnDps: 22,
+  slow: 0.6,
+  reach: 16,
+};
 
 // A build plot is a stone circle beside a road where one tower can stand.
 // Wall slots sit ON a road; a wall there blocks the march.

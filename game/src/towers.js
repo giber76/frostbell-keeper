@@ -2,6 +2,7 @@
 // how they aim and fire, and how they grow when upgraded.
 
 import { TOWERS, UPGRADE_COST_FRACTION, UPGRADE_DAMAGE_FRACTION, MAX_TOWER_LEVEL } from './config.js';
+import { moonTowerMult } from './moon.js';
 
 // The wind's hand on the towers: set once per wave from game.js, so a
 // tower's damage and range are the wind's as well as its own. Walls have
@@ -36,10 +37,12 @@ export function towerDamage(tower) {
   const base = TOWERS[tower.kind].damage;
   // A rekindled tower (v6: the Lantern Sweep's light touched it) fires
   // half again as hard; a blessed tower fires its blessing's harder still.
+  // A tower standing in the moon's band (v7) strikes a quarter harder —
+  // the band moves every wave, so the strong ground moves with it.
   const boon = tower.kind === 'brazier' ? boonFactors.brazier
     : tower.kind === 'cannon' ? boonFactors.cannon : 1;
   const rekindled = tower.rekindled ? 1.5 : 1;
-  return Math.round(base * (1 + UPGRADE_DAMAGE_FRACTION * (tower.level - 1)) * (windFactors.towerDamage || 1) * boon * rekindled);
+  return Math.round(base * (1 + UPGRADE_DAMAGE_FRACTION * (tower.level - 1)) * (windFactors.towerDamage || 1) * boon * rekindled * moonTowerMult(tower.x));
 }
 
 export function towerRange(tower) {

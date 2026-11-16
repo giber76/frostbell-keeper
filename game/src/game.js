@@ -7,6 +7,8 @@ import {
   TOTAL_WAVES, TOWER_KEYS, TOWERS, WAVE_CLEAR_BONUS, KEEPER, WAVES,
   BOONS,
 } from './config.js';
+import { moonForWave, setMoon, applyMoon, moonKeeperMult } from './moon.js';
+import { beginWard, extendWard, endWard, applyWards, wardCost, wardLength } from './wards.js';
 import { createRandom } from './random.js';
 import { createWorld, pickSlot, pickTowerAt } from './world.js';
 import { makeEnemy, waveSpawnList, updateEnemy } from './enemies.js';
@@ -70,9 +72,16 @@ export function createGame(seed, audio) {
     },
     boonOffer: null,
     boonPicked: false,
+    // The moon (v7): where it hangs this wave, and the band of light
+    // under it. Ember wards (v7): the lines the Keeper has laid, and
+    // the drag in progress.
+    moon: moonForWave(1),
+    wards: [],
+    ward: { tool: false, drawing: false, points: [] },
     stats: {
       boltsFired: 0, bells: 0, built: 0, upgraded: 0,
       killsByKind: {}, bestCombo: 0, shardsEarned: 0, boonsTaken: 0,
+      wardsDrawn: 0,
     },
     difficulty: 'Keeper',
     muted: false,
@@ -92,6 +101,9 @@ export function startGame(g, difficulty) {
   // factors between games on one page, so reset them here, or a second
   // play would inherit the first night's boons.
   syncBoonFactors(g);
+  // The moon module keeps its band the same way: a fresh night starts
+  // under the first wave's moon.
+  setMoon(g.moon);
   g.screen = SCREEN_BUILD;
   g.wave = 0;
   g.buildTimer = BUILD_SECONDS;
@@ -162,6 +174,10 @@ export function startWave(g) {
   // towers, so every shot, every march and every reward feels it.
   g.wind = windForWave(g.wave);
   setWind(g.wind);
+  // The moon turns (v7): this wave's moon is set on the game and on
+  // the towers, so the band of light moves with the night.
+  g.moon = moonForWave(g.wave);
+  setMoon(g.moon);
   g.spawnQueue = waveSpawnList(g.wave, g.random);
   g.spawnTimer = 0.5;
   g.screen = SCREEN_WAVE;
@@ -268,8 +284,9 @@ export function tryUpgrade(g) {
 function fireBolt(g, bolt) {
   // The Keeper's own bolts ride the wind; tower bolts already carry it
   // in their damage, so only the Keeper's are scaled here. A blessing
-  // taken at dawn (Ember Heart) feeds them too.
-  if (bolt.from === 'keeper') bolt.damage = Math.round(bolt.damage * g.wind.boltDamage * g.boon.boltMult);
+  // taken at dawn (Ember Heart) feeds them too — and so does the moon
+  // (v7), when the Keeper stands in its band.
+  if (bolt.from === 'keeper') bolt.damage = Math.round(bolt.damage * g.wind.boltDamage * g.boon.boltMult * moonKeeperMult(g.keeper.x));
   g.bolts.push({ ...bolt, alive: true, hit: false });
   g.stats.boltsFired += 1;
 }
@@ -344,9 +361,9 @@ function resolveDeaths(g) {
       g.score += Math.round(e.def.score * mult);
       // The tale: who slew what, for the HUD's feed — short names, so the
       // line fits the panel at a glance.
-      const killerShort = { Brazier: 'Brazier', 'Ember Cannon': 'Cannon', Mortar: 'Mortar', Keeper: 'Keeper' }[e.lastHitBy] || 'The hearth';
+      const killerShort = { Brazier: 'Brazier', 'Ember Cannon': 'Cannon', Mortar: 'Mortar', Keeper: 'Keeper', 'Ember Ward': 'Ward' }[e.lastHitBy] || 'The hearth';
       const preyShort = { wraith: 'Wraith', wolf: 'Wolf', mite: 'Mite', wisp: 'Wisp', golem: 'Golem', bulwark: 'Bulwark', alpha: 'Alpha', matron: 'Matron', matriarch: 'Matriarch' }[e.kind] || e.def.name;
-      const verb = killerShort === 'Brazier' ? 'scorched' : killerShort === 'Cannon' ? 'shattered' : killerShort === 'Mortar' ? 'burst' : 'slew';
+      const verb = killerShort === 'Brazier' ? 'scorched' : killerShort === 'Cannon' ? 'shattered' : killerShort === 'Mortar' ? 'burst' : killerShort === 'Ward' ? 'warded' : 'slew';
       g.feed.push(`${killerShort} ${verb} a ${preyShort}`);
       if (g.feed.length > 3) g.feed.shift();
       burst(g.particles, e.x, e.y, e.def.color, 14, 140);
@@ -370,7 +387,18 @@ function resolveDeaths(g) {
 
 function handleBuildInput(g, input) {
   for (const kind of TOWER_KEYS) {
-    if (input.wasPressed(TOWERS[kind].key)) g.selectedKind = kind;
+    if (input.wasPressed(TOWERS[kind].key)) {
+      g.selectedKind = kind;
+      // Picking a tower puts the ward pen away — the Keeper holds one
+      // tool at a time.
+      g.ward.tool = false;
+    }
+  }
+  // Ember Wards (v7): V opens the ward tool, V again puts it away.
+  if (input.wasPressed('v')) {
+    g.ward.tool = !g.ward.tool;
+    if (g.ward.tool) say(g, 'Ember ward tool — drag the mouse to draw a line of light, release to lay it', 3);
+    else if (g.ward.drawing) { g.ward.drawing = false; g.ward.points = []; }
   }
   // The dawn's offer (v6): three blessing cards, centre board. A click
   // on a card takes it and is spent — it must not also select the plot
@@ -392,6 +420,23 @@ function handleBuildInput(g, input) {
     }
   }
   if (input.action('upgrade')) tryUpgrade(g);
+  // Ember Wards (v7): in a wave, with the ward tool open, the mouse
+  // draws instead of builds. The drag's click is spent — it must not
+  // also build a tower on the plot behind the line.
+  if (g.screen === SCREEN_WAVE && g.ward.tool) {
+    if (input.mouse.clicked && !clickSpent) {
+      beginWard(g, input.mouse.x, input.mouse.y);
+      clickSpent = true;
+    } else if (g.ward.drawing && input.mouse.down) {
+      extendWard(g, input.mouse.x, input.mouse.y);
+    }
+    if (g.ward.drawing && !input.mouse.down) {
+      const done = endWard(g);
+      if (done === 'short') say(g, 'Draw a longer line of light — the ward needs a real stroke', 2);
+      else if (done === 'poor') say(g, 'Not enough shards to lay that ward', 2);
+      else if (done === 'ok') say(g, 'Ember ward laid — the road burns where the light falls', 2.5);
+    }
+  }
   if (input.mouse.clicked && !clickSpent) {
     const slot = pickSlot(g.world, input.mouse.x, input.mouse.y);
     if (slot) {
@@ -426,10 +471,16 @@ function updateWavePlay(g, dt, input) {
     }
   }
   // Keeper + towers + enemies + bolts.
-  updateKeeper(g.keeper, dt, input, (b) => fireBolt(g, b), g.audio, true);
+  // The ward tool (v7) holds the Keeper's hands: while it is open he
+  // draws light instead of throwing bolts.
+  updateKeeper(g.keeper, dt, input, (b) => fireBolt(g, b), g.audio, true, !g.ward.tool);
   // The Lantern Sweep (v6): the cone the Keeper holds slows and scorches
   // the caught frost and rekindles the caught towers.
   if (g.keeper.sweeping) applySweep(g, g.now);
+  // The moon turns (v7): the band's silver light holds the frost.
+  if (g.moon) applyMoon(g, g.now);
+  // Ember wards (v7): the lines the Keeper laid burn and slow the march.
+  if (g.wards.length > 0) applyWards(g, g.now);
   if (input.action('bell')) {
     // A blessing taken at dawn (Long Fuse) holds the freeze longer.
     if (tollBell(g.keeper, g.enemies, g.now, g.audio, KEEPER.bellFreezeSeconds + g.boon.bellBonus)) {
@@ -586,6 +637,12 @@ export function runSelfTest(g) {
     let wavesCleared = 0;
     let lastWave = 0;
     let maintainedWave = -1;
+    // Ember wards (v7): the scripted Keeper draws one line a wave,
+    // alternating the east road and the north road, the way a player
+    // would lay light across the march. The moon's place is recorded
+    // each wave, so the report shows it really turned.
+    let wardWave = 0;
+    const moonXs = [];
     // Sixteen waves take longer than ten: thirty minutes of sim time.
     while (steps < 60 * 60 * 30 && g.screen !== SCREEN_VICTORY && g.screen !== SCREEN_DEFEAT) {
       // Between waves, a real player spends: rebuild chewed walls, upgrade towers.
@@ -622,6 +679,23 @@ export function runSelfTest(g) {
       if (g.screen === SCREEN_BUILD) fakeInput.action = (name) => name === 'confirm';
       else fakeInput.action = (name) => name === 'bell' && g.keeper.bellCooldown <= 0;
       if (g.wave > lastWave) { wavesCleared = g.wave; lastWave = g.wave; }
+      // One ward a wave, drawn through the real code path: across the
+      // east road on even waves, down the north road on odd ones.
+      if (g.screen === SCREEN_WAVE && g.wave > wardWave) {
+        wardWave = g.wave;
+        moonXs.push(g.moon ? g.moon.x : null);
+        if (g.shards >= 30) {
+          if (g.wave % 2 === 0) {
+            beginWard(g, 470, 360);
+            for (let x = 490; x <= 770; x += 20) extendWard(g, x, 360);
+            endWard(g);
+          } else {
+            beginWard(g, 640, 210);
+            for (let y = 230; y <= 510; y += 20) extendWard(g, 640, y);
+            endWard(g);
+          }
+        }
+      }
       updateGame(g, 1 / 60, fakeInput);
       steps += 1;
     }
@@ -645,6 +719,8 @@ export function runSelfTest(g) {
       boonsTaken: g.stats.boonsTaken,
       boonsHeld: g.boon.held,
       sweepHeldSeconds: g.keeper ? Math.round(g.keeper.sweepHeld * 10) / 10 : 0,
+      wardsDrawn: g.stats.wardsDrawn,
+      moonXs,
       errors,
     };
   } catch (err) {

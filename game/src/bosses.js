@@ -24,6 +24,7 @@ export function bossForWave(wave) {
 export function bossEnrageFactor(kind) {
   if (kind === 'matriarch') return 1.4;
   if (kind === 'matron') return 1.35;
+  if (kind === 'alpha') return 1.3;
   return 1;
 }
 
@@ -35,5 +36,5 @@ export function bossBarLabel(kind, enraged) {
   if (kind === 'matron') {
     return enraged ? 'FROSTBITE MATRON — PHASE 2 · ENRAGED' : 'FROSTBITE MATRON — PHASE 1';
   }
-  return 'RIME WOLF ALPHA';
+  return enraged ? 'RIME WOLF ALPHA — PHASE 2 · ENRAGED' : 'RIME WOLF ALPHA';
 }

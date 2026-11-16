@@ -8,13 +8,15 @@ A winter hearth-defense game for the [make.fun best-game-01](https://make.fun/bo
 
 The frost marches on the village. Sixteen waves of wraiths, wolves, golems, mites and wisps — and the Frost Matriarch herself — come down four snow roads for the one warm thing left: the hearth. Build braziers, ember cannons, frostward bells, frost lanterns, shard mortars and snow walls, then fight beside them as the Keeper, throwing ember bolts and tolling the great bell to freeze the march. Hold the warmth until dawn breaks after wave 16.
 
-**The wind turns every wave.** Each wave brings its own wind — a still night, an ember wind, a gale, a snowfall, a blizzard, a dawn wind — and the wind changes everything: creature speed and toughness, tower damage and range, shard rewards, and which way the snow blows. The sixteen waves are told in three nights (Night One: The First Snow, Night Two: The Deep Night, Night Three: The Longest Night), with a dawn bonus between nights. The village lives around the fight: eight buildings, twenty-one pines, four villagers in distinct outfits, a supply sleigh circling the hearth, and animals — a cat dozing by the hearth, a dog trotting the square, a cow by the granary, three chickens pecking by the cottages — while a generative winter melody plays over the battle. Every end screen reports the night's ledger: kills by kind, best combo, towers built and upgraded, bells tolled, shards earned.
+**The wind turns every wave.** Each wave brings its own wind — a still night, an ember wind, a gale, a snowfall, a blizzard, a dawn wind — and the wind changes everything: creature speed and toughness, tower damage and range, shard rewards, and which way the snow blows. The sixteen waves are told in ten nights (Night One: The First Snow, … Night Ten: The Frost Matriarch), with a dawn bonus between nights. **The Keeper's lantern sweeps (v6):** hold right-click (or Q) and the lantern throws a cone of light across the march — frost caught in it is slowed and scorched, and every tower the light touches is rekindled and fires half again as hard. The sweep drinks lantern oil, which refills while the lantern rests. **After every wave the dawn offers three blessings (v6)** — a stronger bolt, a longer bell, deeper pockets, hotter braziers, harder cannon shells, iron walls, swifter towers, a fuller lantern — and the Keeper takes one. **The dawn's offer can be turned (v6)** — press R, or the button under the cards, to redraw the three blessings for 15 shards, once per dawn. Every boss enrages below half health and runs faster in her second phase. The village lives around the fight: eight buildings, twenty-one pines, four villagers in distinct outfits, a supply sleigh circling the hearth, and animals — a cat dozing by the hearth, a dog trotting the square, a cow by the granary, three chickens pecking by the cottages — while a generative winter melody plays over the battle. Every end screen reports the night's ledger: kills by kind, best combo, towers built and upgraded, bells tolled, shards earned, and the dawn blessings taken.
 
 ## How to play
 
 - **1–6** pick a tower, **click a stone circle** to build it. Snow Walls go on the glowing road markers.
 - **WASD / arrows** walk, **mouse** aims, **hold click** throws ember bolts.
 - **SPACE** tolls the bell — freezes every creature for 2.5s (12s cooldown).
+- **Hold right-click (or Q)** sweeps the lantern — slows and scorches the frost in its cone, rekindles the towers it touches (drains oil, refills at rest).
+- **After every wave**, the dawn offers three blessings — **click a card, or press 7 / 8 / 9**, to take one. **R** rerolls the offer (15 shards, once per dawn).
 - **U** upgrades the selected tower, **ENTER** starts the next wave early (+15 shards), **ESC** pauses, **M** mutes.
 - Creatures that reach the hearth steal its warmth. At 0 warmth the village freezes. Survive all 16 waves to win.
 
@@ -30,7 +32,7 @@ No build step, no network requests, no libraries — plain static files under `g
 
 Real renders of the game's own code, staged with `?shot=title|build|play|victory&seed=1` (see `shots.json`):
 
-1. Title screen — 2. Wave 16 in full fight (the Frost Matriarch, Night Three, a dawn wind) — 3. Dawn breaks (victory, with the night's ledger) — 4. The hearth is cold (defeat, with the night's ledger)
+1. Title screen — 2. Wave 16 in full fight (the Frost Matriarch, Night Ten, a dawn wind, the lantern sweeping) — 3. Dawn breaks (victory, with the night's ledger and blessings) — 4. The hearth is cold (defeat, with the night's ledger)
 
 ## Entry
 

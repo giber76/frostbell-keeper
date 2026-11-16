@@ -12,6 +12,16 @@ export function setWind(wind) {
   windFactors = wind || { towerDamage: 1, towerRange: 1 };
 }
 
+// The dawn's hand on the towers (v6): blessings the Keeper chose after a
+// wave — Kindling feeds the braziers, Frostbite Rounds feed the cannons,
+// Swift Hands quicken every tower. Set from game.js when a boon is taken,
+// the same way the wind is set once per wave.
+let boonFactors = { brazier: 1, cannon: 1, rate: 1 };
+
+export function setBoonFactors(factors) {
+  boonFactors = factors || { brazier: 1, cannon: 1, rate: 1 };
+}
+
 export function towerCost(kind, level) {
   const base = TOWERS[kind].cost;
   if (level <= 1) return base;
@@ -24,7 +34,12 @@ export function upgradeCost(tower) {
 
 export function towerDamage(tower) {
   const base = TOWERS[tower.kind].damage;
-  return Math.round(base * (1 + UPGRADE_DAMAGE_FRACTION * (tower.level - 1)) * (windFactors.towerDamage || 1));
+  // A rekindled tower (v6: the Lantern Sweep's light touched it) fires
+  // half again as hard; a blessed tower fires its blessing's harder still.
+  const boon = tower.kind === 'brazier' ? boonFactors.brazier
+    : tower.kind === 'cannon' ? boonFactors.cannon : 1;
+  const rekindled = tower.rekindled ? 1.5 : 1;
+  return Math.round(base * (1 + UPGRADE_DAMAGE_FRACTION * (tower.level - 1)) * (windFactors.towerDamage || 1) * boon * rekindled);
 }
 
 export function towerRange(tower) {
@@ -40,6 +55,8 @@ export function makeTower(kind, x, y) {
     maxHp: def.hp || 0,
     angle: -Math.PI / 2,
     muzzle: 0,
+    // The Lantern Sweep (v6): set while the cone holds the tower.
+    rekindledUntil: 0, rekindled: false,
   };
 }
 
@@ -65,12 +82,18 @@ export function pickTarget(tower, enemies) {
 export function updateTower(tower, dt, now, enemies, addBolt) {
   const def = TOWERS[tower.kind];
   const events = [];
+  // The Lantern Sweep's rekindling (v6): while the cone's light holds
+  // this tower it fires half again as hard — towerDamage reads the flag.
+  tower.rekindled = tower.rekindledUntil > now;
+  // A blessed tower (v6: Swift Hands) fires faster; the rate lives in
+  // the one local, so every branch below pays it the same way.
+  const rate = def.rate * boonFactors.rate;
   if (tower.cooldown > 0) tower.cooldown -= dt;
   if (tower.kind === 'wall') return events;
   if (tower.kind === 'brazier') {
     // A brazier burns everything in its circle, a little at a time.
     if (tower.cooldown <= 0) {
-      tower.cooldown = def.rate;
+      tower.cooldown = rate;
       const range = towerRange(tower);
       for (const e of enemies) {
         if (e.dead || e.leaked) continue;
@@ -89,7 +112,7 @@ export function updateTower(tower, dt, now, enemies, addBolt) {
   }
   if (tower.kind === 'bell') {
     if (tower.cooldown <= 0) {
-      tower.cooldown = def.rate;
+      tower.cooldown = rate;
       const range = towerRange(tower);
       let rang = false;
       for (const e of enemies) {
@@ -108,7 +131,7 @@ export function updateTower(tower, dt, now, enemies, addBolt) {
     // A frost lantern does not fire: its cold light holds the march in
     // its ring, a little at a time, as long as creatures stand in it.
     if (tower.cooldown <= 0) {
-      tower.cooldown = def.rate;
+      tower.cooldown = rate;
       const range = towerRange(tower);
       let held = false;
       for (const e of enemies) {
@@ -129,7 +152,7 @@ export function updateTower(tower, dt, now, enemies, addBolt) {
     if (tower.cooldown <= 0) {
       const target = pickTarget(tower, enemies);
       if (target) {
-        tower.cooldown = def.rate;
+        tower.cooldown = rate;
         tower.angle = Math.atan2(target.y - tower.y, target.x - tower.x);
         tower.muzzle = 0.12;
         addBolt({
@@ -146,7 +169,7 @@ export function updateTower(tower, dt, now, enemies, addBolt) {
   if (tower.cooldown <= 0) {
     const target = pickTarget(tower, enemies);
     if (target) {
-      tower.cooldown = def.rate;
+      tower.cooldown = rate;
       tower.angle = Math.atan2(target.y - tower.y, target.x - tower.x);
       tower.muzzle = 0.12;
       addBolt({

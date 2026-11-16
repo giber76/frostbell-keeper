@@ -4,6 +4,7 @@
 
 import { startGame, startWave, tryBuild } from './game.js';
 import { pickSlot } from './world.js';
+import { offerBoons } from './boons.js';
 
 const IDLE_INPUT = {
   keys: new Set(), pressed: new Set(),
@@ -46,6 +47,10 @@ export function stageShot(name, g, updateGame) {
     g.message = 'Build your defences — press ENTER when ready';
     g.messageUntil = 9999;
     g.selectedKind = 'cannon';
+    // Stage the dawn's offer (v6): the three blessing cards over the
+    // board, so the choice panel can be seen and checked as a scene.
+    g.boonOffer = offerBoons(g);
+    g.boonPicked = false;
     return { screen: 'build' };
   }
   if (name === 'play') {
@@ -57,6 +62,13 @@ export function stageShot(name, g, updateGame) {
     // then plays it for real; the real game still spawns her last.
     g.wave = 15;
     startWave(g);
+    // The staged night took a blessing after wave 15 — Ember Heart — set
+    // before the wave plays, so the Keeper's bolts in the frame really
+    // are the stronger ones and the toast names a real choice.
+    g.boon.held = ['emberHeart'];
+    g.boon.boltMult = 1.3;
+    g.message = 'Dawn blessing taken: Ember Heart — Keeper bolts +30% damage';
+    g.messageUntil = 9999;
     const bossAt = g.spawnQueue.findIndex((s) => s.kind === 'matriarch');
     if (bossAt >= 0) {
       const [bossSpawn] = g.spawnQueue.splice(bossAt, 1);
@@ -82,11 +94,12 @@ export function stageShot(name, g, updateGame) {
     // Ten seconds on the boss: the Keeper hunts the small fry near her
     // (kills and combo for the frame) while the towers hammer her — the
     // boss bar stays up because she is far from dead. Toll the bell once
-    // so the frozen march shows in the frame.
+    // so the frozen march shows in the frame, and hold the Lantern Sweep
+    // (v6) so the cone of light shows over the march too.
     if (g.screen === 'wave') {
       const bossAim = {
         ...IDLE_INPUT,
-        mouse: { x: 640, y: 360, down: true, clicked: false, rightClicked: false },
+        mouse: { x: 640, y: 360, down: true, clicked: false, rightClicked: false, rightDown: true },
       };
       for (let i = 0; i < 60 * 12 && g.screen === 'wave'; i += 1) {
         let target = null;
@@ -101,6 +114,13 @@ export function stageShot(name, g, updateGame) {
         bossAim.action = (n) => i === 0 && n === 'bell' && g.keeper.bellCooldown <= 0;
         updateGame(g, 1 / 60, bossAim);
       }
+      // The frame must show the sweep: the twelve seconds of holding it
+      // may have run the oil dry, so refill the lantern and hold the
+      // cone open for the capture — a real state (full oil, sweeping),
+      // staged the way the boss-first spawn order is staged.
+      g.keeper.oil = g.keeper.oilMax;
+      g.keeper.oilLocked = false;
+      g.keeper.sweeping = true;
     }
     return { screen: 'wave' };
   }
@@ -122,6 +142,10 @@ export function stageShot(name, g, updateGame) {
     g.stats.upgraded = 0;
     g.stats.bells = 0;
     g.stats.shardsEarned = 9710;
+    // Fifteen waves held means fifteen dawn blessings taken — a real
+    // night's ledger, grouped by the end screen into kinds and counts.
+    g.boon.held = ['emberHeart', 'emberHeart', 'kindling', 'kindling', 'ironWalls', 'swiftHands', 'deepPockets', 'longFuse', 'frostbiteRounds', 'lanternOil', 'emberHeart', 'kindling', 'ironWalls', 'deepPockets', 'swiftHands'];
+    g.stats.boonsTaken = 15;
     g.feed = ['Cannon shattered a Matriarch', 'Brazier scorched a Bulwark', 'Keeper slew a Wisp'];
     g.message = '';
     g.screen = 'victory';
@@ -142,6 +166,7 @@ export function stageShot(name, g, updateGame) {
     g.stats.upgraded = 2;
     g.stats.bells = 3;
     g.stats.shardsEarned = 2140;
+    g.message = '';
     g.screen = 'defeat';
     return { screen: 'defeat' };
   }

@@ -5,11 +5,12 @@
 import {
   BUILD_SECONDS, EARLY_START_BONUS, HEARTH_MAX_WARMTH, START_SHARDS,
   TOTAL_WAVES, TOWER_KEYS, TOWERS, WAVE_CLEAR_BONUS, KEEPER, WAVES,
+  BOONS,
 } from './config.js';
 import { createRandom } from './random.js';
 import { createWorld, pickSlot, pickTowerAt } from './world.js';
 import { makeEnemy, waveSpawnList, updateEnemy } from './enemies.js';
-import { makeTower, updateTower, upgradeCost, canUpgrade, setWind } from './towers.js';
+import { makeTower, updateTower, upgradeCost, canUpgrade, setWind, setBoonFactors } from './towers.js';
 import { makeKeeper, updateKeeper, tollBell } from './keeper.js';
 import { makeParticles, spawnSnow, updateParticles, burst, floater } from './particles.js';
 import { createVillage, updateVillage } from './village.js';
@@ -17,6 +18,8 @@ import { windForWave } from './wind.js';
 import { nightForWave, nightEndsAt, NIGHT_BONUS_SHARDS } from './nights.js';
 import { createAnimals, updateAnimals } from './animals.js';
 import { createMelody } from './music.js';
+import { offerBoons, pickBoon, boonCardAt, boonSummary, rerollBoons, rerollButtonAt } from './boons.js';
+import { applySweep } from './sweep.js';
 
 export const SCREEN_TITLE = 'title';
 export const SCREEN_BUILD = 'build';
@@ -58,9 +61,18 @@ export function createGame(seed, audio) {
     selectedPlot: null,
     message: '',
     messageUntil: 0,
+    // Dawn Boons (v6): blessings the Keeper has taken, and the offer open
+    // right now. Multipliers start at 1 and grow as boons are taken.
+    boon: {
+      held: [], taken: 0,
+      boltMult: 1, bellBonus: 0, brazierMult: 1, cannonMult: 1,
+      rateMult: 1, wallBonus: 0, rerolled: false,
+    },
+    boonOffer: null,
+    boonPicked: false,
     stats: {
       boltsFired: 0, bells: 0, built: 0, upgraded: 0,
-      killsByKind: {}, bestCombo: 0, shardsEarned: 0,
+      killsByKind: {}, bestCombo: 0, shardsEarned: 0, boonsTaken: 0,
     },
     difficulty: 'Keeper',
     muted: false,
@@ -76,11 +88,61 @@ export function startGame(g, difficulty) {
   fresh.best = g.best;
   fresh.difficulty = g.difficulty;
   Object.keys(fresh).forEach((k) => { g[k] = fresh[k]; });
+  // A fresh night starts with no blessings: the towers module keeps its
+  // factors between games on one page, so reset them here, or a second
+  // play would inherit the first night's boons.
+  syncBoonFactors(g);
   g.screen = SCREEN_BUILD;
   g.wave = 0;
   g.buildTimer = BUILD_SECONDS;
   g.melody.start();
   say(g, 'Build your defences — press ENTER when ready', 6);
+}
+
+// Push the Keeper's blessings into the towers module, so a tower's damage
+// and rate are the blessings' as well as its own. Called on a fresh game
+// and every time a boon is taken.
+export function syncBoonFactors(g) {
+  setBoonFactors({
+    brazier: g.boon.brazierMult,
+    cannon: g.boon.cannonMult,
+    rate: g.boon.rateMult,
+  });
+}
+
+// Take one of the offered dawn boons: apply it, count it, close the offer.
+export function takeBoon(g, index) {
+  if (!g.boonOffer || g.boonPicked) return false;
+  const id = g.boonOffer[index];
+  if (!id) return false;
+  if (!pickBoon(g, id)) return false;
+  syncBoonFactors(g);
+  g.boonPicked = true;
+  g.stats.boonsTaken += 1;
+  g.boonOffer = null;
+  const boon = BOONS[id];
+  say(g, `Dawn blessing taken: ${boon.name} — ${boon.blurb}`, 4);
+  g.audio.build();
+  return true;
+}
+
+// Turn the dawn's offer (v6): redraw the three cards for 15 shards,
+// once per dawn. A turn that cannot happen says why, and the click that
+// asked for it is spent either way — the panel, not the plot behind it,
+// owns that click.
+export function rerollOffer(g) {
+  if (!g.boonOffer || g.boonPicked) return false;
+  const fresh = rerollBoons(g);
+  if (!fresh) {
+    say(g, g.boon.rerolled
+      ? 'The dawn has turned once already — take a blessing'
+      : 'Not enough shards to turn the dawn — 15◆', 2.5);
+    return false;
+  }
+  g.boonOffer = fresh;
+  say(g, 'The dawn turns — three new blessings, 15◆', 3);
+  g.audio.build();
+  return true;
 }
 
 function say(g, text, seconds) {
@@ -92,6 +154,10 @@ export function startWave(g) {
   if (g.wave >= TOTAL_WAVES) return;
   g.wave += 1;
   g.combo = 0;
+  // The dawn's offer closes when the wave starts: a blessing not taken
+  // by then is gone with the night that offered it.
+  g.boonOffer = null;
+  g.boonPicked = false;
   // The wind turns: this wave's wind is set on the game and on the
   // towers, so every shot, every march and every reward feels it.
   g.wind = windForWave(g.wave);
@@ -116,8 +182,14 @@ function endWave(g) {
     g.audio.win();
     return;
   }
-  // Dawn breaks briefly between nights: a breath, a bonus, and the next
-  // night's name — the night is told in three chapters, not sixteen waves.
+  // Dawn breaks briefly between nights: a breath, a bonus, a blessing,
+  // and the next night's name — the night is told in ten chapters, not
+  // sixteen waves. The dawn offers three blessings after every wave; the
+  // Keeper takes one before the next wave starts.
+  g.boonOffer = offerBoons(g);
+  g.boonPicked = false;
+  // A fresh dawn can be turned once — the reroll is per offer, not per night.
+  g.boon.rerolled = false;
   if (nightEndsAt(g.wave)) {
     const next = nightForWave(g.wave + 1);
     g.shards += NIGHT_BONUS_SHARDS;
@@ -154,6 +226,12 @@ export function tryBuild(g, slot) {
   }
   g.shards -= cost;
   slot.tower = makeTower(kind, slot.x, slot.y);
+  // Iron Walls (v6): a blessing taken earlier in the night strengthens
+  // every wall the Keeper builds from then on, not just the standing ones.
+  if (kind === 'wall' && g.boon.wallBonus > 0) {
+    slot.tower.maxHp += g.boon.wallBonus;
+    slot.tower.hp = slot.tower.maxHp;
+  }
   g.stats.built += 1;
   g.audio.build();
   burst(g.particles, slot.x, slot.y, '#ffd76a', 12, 90);
@@ -189,8 +267,9 @@ export function tryUpgrade(g) {
 
 function fireBolt(g, bolt) {
   // The Keeper's own bolts ride the wind; tower bolts already carry it
-  // in their damage, so only the Keeper's are scaled here.
-  if (bolt.from === 'keeper') bolt.damage = Math.round(bolt.damage * g.wind.boltDamage);
+  // in their damage, so only the Keeper's are scaled here. A blessing
+  // taken at dawn (Ember Heart) feeds them too.
+  if (bolt.from === 'keeper') bolt.damage = Math.round(bolt.damage * g.wind.boltDamage * g.boon.boltMult);
   g.bolts.push({ ...bolt, alive: true, hit: false });
   g.stats.boltsFired += 1;
 }
@@ -293,8 +372,27 @@ function handleBuildInput(g, input) {
   for (const kind of TOWER_KEYS) {
     if (input.wasPressed(TOWERS[kind].key)) g.selectedKind = kind;
   }
+  // The dawn's offer (v6): three blessing cards, centre board. A click
+  // on a card takes it and is spent — it must not also select the plot
+  // behind the card. Keys 7 / 8 / 9 take the cards the same way; R (or
+  // the button under the cards) turns the dawn once, for 15 shards.
+  let clickSpent = false;
+  if (g.boonOffer && !g.boonPicked) {
+    if (input.wasPressed('7')) clickSpent = takeBoon(g, 0);
+    else if (input.wasPressed('8')) clickSpent = takeBoon(g, 1);
+    else if (input.wasPressed('9')) clickSpent = takeBoon(g, 2);
+    else if (input.wasPressed('r')) clickSpent = rerollOffer(g);
+    else if (input.mouse.clicked) {
+      const card = boonCardAt(input.mouse.x, input.mouse.y);
+      if (card >= 0) clickSpent = takeBoon(g, card);
+      else if (rerollButtonAt(input.mouse.x, input.mouse.y)) {
+        clickSpent = true;
+        rerollOffer(g);
+      }
+    }
+  }
   if (input.action('upgrade')) tryUpgrade(g);
-  if (input.mouse.clicked) {
+  if (input.mouse.clicked && !clickSpent) {
     const slot = pickSlot(g.world, input.mouse.x, input.mouse.y);
     if (slot) {
       tryBuild(g, slot);
@@ -304,7 +402,10 @@ function handleBuildInput(g, input) {
       else g.selectedPlot = null;
     }
   }
-  if (input.mouse.rightClicked) g.selectedPlot = null;
+  // Right-click deselects a plot — but not in a wave, where holding the
+  // right button is the Lantern Sweep and the click that starts it is
+  // not a deselect.
+  if (input.mouse.rightClicked && g.screen !== SCREEN_WAVE) g.selectedPlot = null;
 }
 
 function updateWavePlay(g, dt, input) {
@@ -325,9 +426,13 @@ function updateWavePlay(g, dt, input) {
     }
   }
   // Keeper + towers + enemies + bolts.
-  updateKeeper(g.keeper, dt, input, (b) => fireBolt(g, b), g.audio);
+  updateKeeper(g.keeper, dt, input, (b) => fireBolt(g, b), g.audio, true);
+  // The Lantern Sweep (v6): the cone the Keeper holds slows and scorches
+  // the caught frost and rekindles the caught towers.
+  if (g.keeper.sweeping) applySweep(g, g.now);
   if (input.action('bell')) {
-    if (tollBell(g.keeper, g.enemies, g.now, g.audio)) {
+    // A blessing taken at dawn (Long Fuse) holds the freeze longer.
+    if (tollBell(g.keeper, g.enemies, g.now, g.audio, KEEPER.bellFreezeSeconds + g.boon.bellBonus)) {
       g.stats.bells += 1;
       burst(g.particles, g.keeper.x, g.keeper.y, '#9fd8ff', 20, 200);
     }
@@ -409,15 +514,26 @@ export function updateGame(g, dt, input) {
   if (g.screen === SCREEN_BUILD) {
     if (!g.keeper) g.keeper = makeKeeper();
     handleBuildInput(g, input);
-    updateKeeper(g.keeper, dt, input, () => {}, g.audio);
+    updateKeeper(g.keeper, dt, input, () => {}, g.audio, false);
     g.buildTimer -= dt;
     if (input.action('confirm')) {
+      // A dawn offer unpicked blocks the wave: the Keeper chooses first.
+      // The toast says so, and the cards name their keys.
+      if (g.boonOffer && !g.boonPicked) {
+        say(g, 'Choose a dawn blessing first — click a card, or press 7, 8 or 9', 2.5);
+        return;
+      }
       g.shards += EARLY_START_BONUS;
       say(g, `Early start! +${EARLY_START_BONUS} shards`, 2);
       startWave(g);
       return;
     }
-    if (g.buildTimer <= 0) startWave(g);
+    if (g.buildTimer <= 0) {
+      // The timer ran out with an offer unpicked: the dawn takes the
+      // first card for the Keeper, so the night never stalls.
+      if (g.boonOffer && !g.boonPicked) takeBoon(g, 0);
+      startWave(g);
+    }
     return;
   }
   if (g.screen === SCREEN_WAVE) {
@@ -460,7 +576,7 @@ export function runSelfTest(g) {
     // Play: 10 waves, keeper auto-aims at the nearest creature, bell on cooldown.
     const fakeInput = {
       keys: new Set(), pressed: new Set(),
-      mouse: { x: 640, y: 360, down: true, clicked: false, rightClicked: false },
+      mouse: { x: 640, y: 360, down: true, clicked: false, rightClicked: false, rightDown: false },
       down: () => false,
       wasPressed: () => false,
       action: (name) => name === 'confirm' && g.screen === SCREEN_BUILD,
@@ -475,6 +591,9 @@ export function runSelfTest(g) {
       // Between waves, a real player spends: rebuild chewed walls, upgrade towers.
       if (g.screen === SCREEN_BUILD && maintainedWave !== g.wave) {
         maintainedWave = g.wave;
+        // The dawn offers a blessing after every wave: take the first
+        // card, or the wave never starts (ENTER is blocked until chosen).
+        if (g.boonOffer && !g.boonPicked) takeBoon(g, 0);
         for (const w of g.world.walls) {
           if (!w.tower && g.shards >= TOWERS.wall.cost) {
             g.selectedKind = 'wall';
@@ -497,6 +616,9 @@ export function runSelfTest(g) {
         if (d < bestD) { bestD = d; best = e; }
       }
       if (best) { fakeInput.mouse.x = best.x; fakeInput.mouse.y = best.y; }
+      // The Lantern Sweep (v6): hold it while the march is close enough
+      // for the cone to catch — the oil drains, then refills while it rests.
+      fakeInput.mouse.rightDown = g.screen === SCREEN_WAVE && bestD < 320;
       if (g.screen === SCREEN_BUILD) fakeInput.action = (name) => name === 'confirm';
       else fakeInput.action = (name) => name === 'bell' && g.keeper.bellCooldown <= 0;
       if (g.wave > lastWave) { wavesCleared = g.wave; lastWave = g.wave; }
@@ -520,6 +642,9 @@ export function runSelfTest(g) {
       upgraded: g.stats.upgraded,
       bells: g.stats.bells,
       shardsEarned: g.stats.shardsEarned,
+      boonsTaken: g.stats.boonsTaken,
+      boonsHeld: g.boon.held,
+      sweepHeldSeconds: g.keeper ? Math.round(g.keeper.sweepHeld * 10) / 10 : 0,
       errors,
     };
   } catch (err) {

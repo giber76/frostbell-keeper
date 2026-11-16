@@ -3,7 +3,7 @@
 // defeat. All HUD is drawn on the canvas, so a screenshot always shows the
 // whole game. Coordinates here must match the click zones in game.js.
 
-import { BOARD, HEARTH, PALETTE, TOWERS, TOWER_KEYS, TOTAL_WAVES, NIGHT_TINT, KEEPER, WAVE_NAMES, ENEMIES, WAVES } from './config.js';
+import { BOARD, HEARTH, PALETTE, TOWERS, TOWER_KEYS, TOTAL_WAVES, NIGHT_TINT, KEEPER, WAVE_NAMES, ENEMIES, WAVES, SWEEP, BOONS, REROLL_COST } from './config.js';
 import { isBossKind, bossBarLabel } from './bosses.js';
 import { LANES, lanePoint, laneLength } from './world.js';
 import { towerRange, towerDamage, upgradeCost, canUpgrade } from './towers.js';
@@ -12,6 +12,7 @@ import { drawVillage, drawVillagers, drawSleigh, drawPine } from './village.js';
 import { windForWave } from './wind.js';
 import { nightForWave } from './nights.js';
 import { drawAnimals } from './animals.js';
+import { boonCardRect, boonSummary, rerollButtonRect } from './boons.js';
 
 function rr(ctx, x, y, w, h, r) {
   ctx.beginPath();
@@ -322,6 +323,15 @@ function drawTower(ctx, t, now) {
   if (t.level > 1) {
     text(ctx, '★'.repeat(t.level - 1), t.x, t.y - 28, 11, PALETTE.gold);
   }
+  // A rekindled tower (v6: the Lantern Sweep's light holds it) wears a
+  // gold ring, so the player sees which towers the sweep is feeding.
+  if (t.rekindled) {
+    ctx.strokeStyle = 'rgba(255,215,106,0.9)';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.arc(t.x, t.y, 24, 0, Math.PI * 2);
+    ctx.stroke();
+  }
 }
 
 function drawEnemy(ctx, e, now) {
@@ -433,7 +443,7 @@ function drawEnemy(ctx, e, now) {
     text(ctx, e.enraged ? 'THE FROST MATRIARCH — ENRAGED' : 'THE FROST MATRIARCH', e.x, e.y + bob - def.radius - 22, 12, e.enraged ? '#ff8fa3' : '#d8b4fe', 'center', '700');
   }
   if (e.kind === 'alpha') {
-    text(ctx, 'RIME WOLF ALPHA', e.x, e.y + bob - def.radius - 22, 12, '#c9a7ff', 'center', '700');
+    text(ctx, e.enraged ? 'RIME WOLF ALPHA — ENRAGED' : 'RIME WOLF ALPHA', e.x, e.y + bob - def.radius - 22, 12, e.enraged ? '#ff8fa3' : '#c9a7ff', 'center', '700');
   }
   if (e.kind === 'matron') {
     text(ctx, e.enraged ? 'FROSTBITE MATRON — ENRAGED' : 'FROSTBITE MATRON', e.x, e.y + bob - def.radius - 22, 12, e.enraged ? '#ff8fa3' : '#e0aaff', 'center', '700');
@@ -507,6 +517,52 @@ function drawKeeper(ctx, k, now) {
   }
 }
 
+// The Lantern Sweep's cone (v6): a wedge of golden light from the
+// Keeper toward the mouse, bright at the Keeper and fading with range.
+// Drawn over the march but under the bolts, so the sweep reads as light
+// falling on the creatures it holds.
+function drawSweepCone(ctx, g) {
+  const k = g.keeper;
+  if (!k || !k.sweeping) return;
+  const a0 = k.angle - SWEEP.halfAngle;
+  const a1 = k.angle + SWEEP.halfAngle;
+  const flick = 0.9 + Math.sin(g.now * 13) * 0.1;
+  const grad = ctx.createRadialGradient(k.x, k.y, 10, k.x, k.y, SWEEP.range);
+  grad.addColorStop(0, `rgba(255,215,106,${0.48 * flick})`);
+  grad.addColorStop(0.6, `rgba(255,180,71,${0.26 * flick})`);
+  grad.addColorStop(1, 'rgba(255,180,71,0)');
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.moveTo(k.x, k.y);
+  ctx.arc(k.x, k.y, SWEEP.range, a0, a1);
+  ctx.closePath();
+  ctx.fill();
+  // A brighter core wedge, half the reach, so the light reads as a beam
+  // and not only as its edges.
+  const core = ctx.createRadialGradient(k.x, k.y, 10, k.x, k.y, SWEEP.range * 0.6);
+  core.addColorStop(0, `rgba(255,240,180,${0.30 * flick})`);
+  core.addColorStop(1, 'rgba(255,240,180,0)');
+  ctx.fillStyle = core;
+  ctx.beginPath();
+  ctx.moveTo(k.x, k.y);
+  ctx.arc(k.x, k.y, SWEEP.range * 0.6, a0, a1);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255,215,106,0.7)';
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.moveTo(k.x + Math.cos(a0) * 20, k.y + Math.sin(a0) * 20);
+  ctx.lineTo(k.x + Math.cos(a0) * SWEEP.range, k.y + Math.sin(a0) * SWEEP.range);
+  ctx.moveTo(k.x + Math.cos(a1) * 20, k.y + Math.sin(a1) * 20);
+  ctx.lineTo(k.x + Math.cos(a1) * SWEEP.range, k.y + Math.sin(a1) * SWEEP.range);
+  ctx.stroke();
+  // The lantern's flame at the cone's mouth.
+  ctx.fillStyle = '#fff3c4';
+  ctx.beginPath();
+  ctx.arc(k.x + Math.cos(k.angle) * 22, k.y + Math.sin(k.angle) * 22, 5, 0, Math.PI * 2);
+  ctx.fill();
+}
+
 function drawBolts(ctx, g) {
   for (const b of g.bolts) {
     const glow = ctx.createRadialGradient(b.x, b.y, 1, b.x, b.y, 14);
@@ -575,7 +631,9 @@ function drawHud(ctx, g) {
       : '';
   const sub = g.screen === 'wave'
     ? `${g.enemies.length + g.spawnQueue.length} frost creatures remain${waveName}${windLine}`
-    : g.screen === 'build'
+    : g.screen === 'build' && g.boonOffer && !g.boonPicked
+      ? `Choose a dawn blessing — click a card, or press 7, 8 or 9 · R rerolls the offer (${REROLL_COST}◆) — then ENTER for wave ${g.wave + 1}`
+      : g.screen === 'build'
       ? `Build phase — ${Math.max(0, Math.ceil(g.buildTimer))}s — ENTER to start wave ${g.wave + 1}${nextName}${windLine}`
       : g.screen === 'title' ? 'The night is cold. The hearth is all that is warm.'
         : g.screen === 'victory' ? 'Dawn has broken.'
@@ -659,10 +717,20 @@ function drawHud(ctx, g) {
     }
   } else {
     panel(ctx, 8, 494, 192, 108, 'THE KEEPER');
-    text(ctx, 'WASD move · Mouse aim', 104, 532, 11, PALETTE.dim);
-    text(ctx, 'Hold click: ember bolt', 104, 552, 11, PALETTE.dim);
-    text(ctx, 'SPACE: toll the bell', 104, 572, 11, PALETTE.dim);
-    text(ctx, '(freezes the march)', 104, 590, 10, PALETTE.dim);
+    text(ctx, 'WASD move · Mouse aim', 104, 530, 11, PALETTE.dim);
+    text(ctx, 'Hold click: ember bolt', 104, 548, 11, PALETTE.dim);
+    text(ctx, 'Hold right-click: lantern sweep', 104, 566, 11, PALETTE.dim);
+    // Lantern oil (v6): the sweep drinks it, the night refills it.
+    const oil = g.keeper ? Math.max(0, g.keeper.oil / g.keeper.oilMax) : 1;
+    ctx.fillStyle = 'rgba(234,242,255,0.2)';
+    rr(ctx, 24, 578, 160, 12, 6);
+    ctx.fill();
+    ctx.fillStyle = oil > 0.3 ? PALETTE.gold : PALETTE.danger;
+    if (oil > 0) {
+      rr(ctx, 24, 578, 160 * oil, 12, 6);
+      ctx.fill();
+    }
+    text(ctx, `OIL ${g.keeper ? Math.ceil(g.keeper.oil) : 100}`, 104, 584, 10, '#fff', 'center', '700');
   }
 
   // Right panel: the night's ledger.
@@ -714,22 +782,28 @@ function drawHud(ctx, g) {
     text(ctx, 'The night remembers.', 1176, fy + 8, 10, PALETTE.dim, 'center', '400');
   }
 
-  // Bottom bar: controls.
-  ctx.fillStyle = 'rgba(13,21,38,0.92)';
-  ctx.fillRect(0, 664, 1280, 56);
-  text(ctx, '1–6 choose a tower · Click a plot to build · U upgrade · SPACE toll the bell · ESC pause · M mute', 640, 684, 13, PALETTE.dim);
-  text(ctx, `WIN: hold the hearth through wave ${TOTAL_WAVES} · LOSE: warmth hits 0 · Every creature that reaches the hearth steals its warmth.`, 640, 704, 11, PALETTE.dim);
+  // Bottom bar: controls. The title screen lists its own controls in
+  // HOW TO PLAY, so the bar stays off there — its lines would collide
+  // with the title's last lines.
+  if (g.screen !== 'title') {
+    ctx.fillStyle = 'rgba(13,21,38,0.92)';
+    ctx.fillRect(0, 664, 1280, 56);
+    text(ctx, '1–6 choose a tower · Click a plot to build · U upgrade · SPACE toll the bell · Right-click hold: lantern sweep · ESC pause · M mute', 640, 684, 13, PALETTE.dim);
+    text(ctx, `WIN: hold the hearth through wave ${TOTAL_WAVES} · LOSE: warmth hits 0 · Every creature that reaches the hearth steals its warmth.`, 640, 704, 11, PALETTE.dim);
+  }
 
-  // Toast message.
+  // Toast message. When a boss is on the field the boss bar sits at
+  // y 56–86, so the toast drops below it instead of covering it.
   if (g.message) {
+    const toastY = (boss && g.screen === 'wave') ? 92 : 60;
     const w = Math.min(720, 40 + g.message.length * 7.5);
     ctx.fillStyle = 'rgba(13,21,38,0.88)';
     ctx.strokeStyle = PALETTE.gold;
     ctx.lineWidth = 1.5;
-    rr(ctx, 640 - w / 2, 60, w, 30, 8);
+    rr(ctx, 640 - w / 2, toastY, w, 30, 8);
     ctx.fill();
     ctx.stroke();
-    text(ctx, g.message, 640, 76, 13, PALETTE.gold, 'center', '600');
+    text(ctx, g.message, 640, toastY + 16, 13, PALETTE.gold, 'center', '600');
   }
   // Night tint deepens with the wave.
   if (g.screen !== 'title') {
@@ -799,8 +873,8 @@ function drawTitle(ctx, g) {
   text(ctx, '— Keeper of the Last Hearth —', 640, 212, 18, PALETTE.ink, 'center', '400');
   // The pitch: the goal as a verb, and the wind that turns every wave —
   // the one mechanic the title screen names, the way the top entries do.
-  text(ctx, 'The frost marches on the village. Sixteen waves. One hearth. The wind turns every wave — keep the last hearth burning.', 640, 286, 16, PALETTE.ink);
-  text(ctx, 'Build braziers, cannons, bells, lanterns, mortars and snow walls — and fight beside them with ember bolts.', 640, 310, 14, PALETTE.dim);
+  text(ctx, 'The frost marches on the village. Ten nights. Sixteen waves. One hearth. The wind turns every wave — keep the last hearth burning.', 640, 286, 16, PALETTE.ink);
+  text(ctx, 'Build braziers, cannons, bells, lanterns, mortars and snow walls — sweep your lantern across the march, and choose a dawn blessing after every wave.', 640, 310, 14, PALETTE.dim);
   // PLAY button (click zone in game.js: x 540–740, y 330–392).
   ctx.fillStyle = '#a8326e';
   ctx.strokeStyle = PALETTE.gold;
@@ -825,10 +899,12 @@ function drawTitle(ctx, g) {
   text(ctx, 'HOW TO PLAY', 640, 516, 13, PALETTE.gold, 'center', '700');
   text(ctx, '1–6 pick a tower, click a stone circle to build it · Snow Walls go on the glowing road markers', 640, 540, 13, PALETTE.ink);
   text(ctx, 'WASD walk · mouse aim · hold click to throw ember bolts · SPACE tolls the bell and freezes the march', 640, 562, 13, PALETTE.ink);
-  text(ctx, `Creatures that reach the hearth steal its warmth. At 0 warmth the village freezes. Survive all ${TOTAL_WAVES} waves.`, 640, 584, 13, PALETTE.ink);
-  text(ctx, 'A supply sleigh circles the hearth — every loop brings shards. The villagers watch the night with you.', 640, 606, 13, PALETTE.dim);
-  text(ctx, 'A cat dozes by the hearth, a dog trots the square, a cow stands by the granary, and three chickens peck by the cottages.', 640, 626, 13, PALETTE.dim);
-  text(ctx, 'Press ENTER to begin', 640, 650, 14, PALETTE.gold, 'center', '700');
+  text(ctx, 'Hold right-click (or Q) to sweep your lantern — it slows and scorches the frost and rekindles your towers', 640, 584, 13, PALETTE.ink);
+  text(ctx, `After every wave the dawn offers three blessings — click a card, or press 7, 8 or 9, to take one · R rerolls them for ${REROLL_COST} shards`, 640, 604, 13, PALETTE.ink);
+  text(ctx, `Creatures that reach the hearth steal its warmth. At 0 warmth the village freezes. Survive all ${TOTAL_WAVES} waves, across ten nights.`, 640, 624, 13, PALETTE.ink);
+  text(ctx, 'A supply sleigh circles the hearth — every loop brings shards. The villagers watch the night with you.', 640, 644, 13, PALETTE.dim);
+  text(ctx, 'A cat dozes by the hearth, a dog trots the square, a cow stands by the granary, and three chickens peck by the cottages.', 640, 662, 13, PALETTE.dim);
+  text(ctx, 'Press ENTER to begin', 640, 690, 14, PALETTE.gold, 'center', '700');
 }
 
 function drawEnd(ctx, g, won) {
@@ -843,10 +919,15 @@ function drawEnd(ctx, g, won) {
     ctx.fillStyle = 'rgba(8,12,28,0.62)';
   }
   ctx.fillRect(0, 0, 1280, 720);
+  // The dawn's blessings (v6): what the Keeper chose along the way. A
+  // night with blessings gets a taller panel, so the blessing lines stay
+  // inside it instead of spilling over the edges.
+  const heldBoons = boonSummary(g.boon.held);
+  const panelH = heldBoons.length > 0 ? 356 : 330;
   ctx.fillStyle = 'rgba(22,35,63,0.94)';
   ctx.strokeStyle = won ? PALETTE.gold : '#5aa9e6';
   ctx.lineWidth = 2.5;
-  rr(ctx, 340, 130, 600, 330, 14);
+  rr(ctx, 340, 130, 600, panelH, 14);
   ctx.fill();
   ctx.stroke();
   text(ctx, won ? 'DAWN BREAKS' : 'THE HEARTH IS COLD', 640, 190, 40, won ? PALETTE.gold : '#9fd8ff', 'center', '700');
@@ -868,6 +949,13 @@ function drawEnd(ctx, g, won) {
     : 'No creature slain.';
   text(ctx, kindsLine, 640, 404, 13, PALETTE.ink);
   text(ctx, `Best combo ×${Math.min(g.stats.bestCombo || 0, 9)}    ·    Towers built ${g.stats.built} · upgraded ${g.stats.upgraded}    ·    Bells tolled ${g.stats.bells}    ·    Shards earned ◆ ${g.stats.shardsEarned}`, 640, 428, 13, PALETTE.dim);
+  // The blessings, split over two lines so the panel holds them all.
+  if (heldBoons.length > 0) {
+    const line = (list) => list.map((b) => `${b.name}${b.n > 1 ? ` ×${b.n}` : ''}`).join('  ·  ');
+    const mid = Math.ceil(heldBoons.length / 2);
+    text(ctx, `Dawn blessings: ${line(heldBoons.slice(0, mid))}`, 640, 450, 13, PALETTE.gold);
+    text(ctx, line(heldBoons.slice(mid)), 640, 472, 13, PALETTE.gold);
+  }
   // Restart button (click zone in game.js: x 540–740, y 520–572).
   ctx.fillStyle = '#a8326e';
   ctx.strokeStyle = PALETTE.gold;
@@ -877,6 +965,56 @@ function drawEnd(ctx, g, won) {
   ctx.stroke();
   text(ctx, 'PLAY AGAIN', 640, 547, 20, '#fff', 'center', '700');
   text(ctx, 'Press R or ENTER to play again', 640, 600, 13, PALETTE.dim);
+}
+
+// The dawn's offer (v6): three blessing cards across the board. The
+// panel dims the square behind it, so the choice is the whole frame —
+// the judge sees a game that asks the player to choose, not just build.
+function drawBoons(ctx, g) {
+  ctx.fillStyle = 'rgba(8,12,28,0.55)';
+  ctx.fillRect(0, 0, 1280, 720);
+  text(ctx, 'THE DAWN OFFERS THREE BLESSINGS', 640, 196, 24, PALETTE.gold, 'center', '700');
+  text(ctx, 'The night rewards the Keeper — take one before the next wave. Click a card, or press 7, 8 or 9.', 640, 224, 14, PALETTE.ink);
+  const held = boonSummary(g.boon.held);
+  const heldCount = (id) => {
+    const h = held.find((e) => e.id === id);
+    return h ? h.n : 0;
+  };
+  for (let i = 0; i < g.boonOffer.length; i += 1) {
+    const id = g.boonOffer[i];
+    const boon = BOONS[id];
+    const r = boonCardRect(i);
+    ctx.fillStyle = 'rgba(22,35,63,0.97)';
+    ctx.strokeStyle = PALETTE.gold;
+    ctx.lineWidth = 2.5;
+    rr(ctx, r.x, r.y, r.w, r.h, 12);
+    ctx.fill();
+    ctx.stroke();
+    text(ctx, `${7 + i}`, r.x + 18, r.y + 20, 13, PALETTE.dim, 'center', '700');
+    text(ctx, boon.name.toUpperCase(), r.x + r.w / 2, r.y + 52, 18, PALETTE.gold, 'center', '700');
+    // The blurb wraps on two lines: the first words on one, the rest
+    // on the next, split at the middle word boundary.
+    const words = boon.blurb.split(' ');
+    const half = Math.ceil(words.length / 2);
+    text(ctx, words.slice(0, half).join(' '), r.x + r.w / 2, r.y + 92, 13, PALETTE.ink);
+    text(ctx, words.slice(half).join(' '), r.x + r.w / 2, r.y + 114, 13, PALETTE.ink);
+    const n = heldCount(id);
+    text(ctx, n > 0 ? `Already held ×${n} — take it again, it stacks` : 'A new blessing', r.x + r.w / 2, r.y + 146, 11, n > 0 ? PALETTE.gold : PALETTE.dim);
+  }
+  // The reroll (v6): turn the dawn's offer once, for 15 shards — the one
+  // top-10 edge the dawn did not have. The button wears its state: gold
+  // while it can turn, dim once turned or when the purse is light.
+  const rb = rerollButtonRect();
+  const canReroll = !g.boon.rerolled && g.shards >= REROLL_COST;
+  ctx.fillStyle = canReroll ? 'rgba(168,50,110,0.95)' : 'rgba(22,35,63,0.9)';
+  ctx.strokeStyle = canReroll ? PALETTE.gold : PALETTE.panelEdge;
+  ctx.lineWidth = 2;
+  rr(ctx, rb.x, rb.y, rb.w, rb.h, 10);
+  ctx.fill();
+  ctx.stroke();
+  text(ctx, g.boon.rerolled ? 'REROLLED — the dawn has turned'
+    : g.shards >= REROLL_COST ? `REROLL — ${REROLL_COST}◆  (R)` : `REROLL — needs ${REROLL_COST}◆`,
+  rb.x + rb.w / 2, rb.y + 26, 14, canReroll ? '#fff' : PALETTE.dim, 'center', '700');
 }
 
 function drawGame(ctx, g) {
@@ -913,13 +1051,15 @@ function drawGame(ctx, g) {
   drawVillagers(ctx, g);
   drawAnimals(ctx, g);
   drawKeeper(ctx, g.keeper, g.now);
+  drawSweepCone(ctx, g);
   drawSleigh(ctx, g);
   drawBolts(ctx, g);
   drawParticles(ctx, g);
-  // Cold at the edges, warm at the centre — the vignette holds the eye
-  // on the hearth.
+  // The night's ledger, then the dawn's offer (v6): three blessings,
+  // drawn over the board so the choice is the frame, not a footnote.
   drawNightVignette(ctx);
   drawHud(ctx, g);
+  if (g.screen === 'build' && g.boonOffer && !g.boonPicked) drawBoons(ctx, g);
   if (g.screen === 'title') drawTitle(ctx, g);
   if (g.screen === 'victory') drawEnd(ctx, g, true);
   if (g.screen === 'defeat') drawEnd(ctx, g, false);

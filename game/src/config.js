@@ -2,9 +2,11 @@
 // A winter hearth-defense game: frost creatures march down four snow roads
 // toward the village hearth. The Keeper places braziers, cannons, bells,
 // frost lanterns, shard mortars and snow walls, and fights beside them with
-// ember bolts, until dawn breaks after wave 16 — or the last warmth is
-// stolen and the village freezes. The wind turns every wave, and the sixteen
-// waves are told in three nights.
+// ember bolts — and, since v6, sweeps the lantern's light across the
+// march — until dawn breaks after wave 16 — or the last warmth is
+// stolen and the village freezes. The wind turns every wave, the sixteen
+// waves are told in ten nights, and after every wave the dawn offers the
+// Keeper a choice of three blessings.
 
 export const VIEW_W = 1280;
 export const VIEW_H = 720;
@@ -170,6 +172,40 @@ export const KEEPER = {
   speed: 210, radius: 14, boltDamage: 22, boltSpeed: 520, boltRate: 0.22,
   boltRadius: 5, bellFreezeSeconds: 2.5, bellCooldownSeconds: 12,
 };
+
+// The Lantern Sweep (v6): hold right-click or Q and the Keeper sweeps a
+// cone of lantern light toward the mouse. Frost in the cone is slowed and
+// scorched; towers the light touches are rekindled and fire half again as
+// hard for two seconds. The sweep drinks oil, which refills while the
+// lantern rests — the Keeper chooses when the light matters most.
+export const SWEEP = {
+  range: 260, halfAngle: 0.5, slow: 0.45, burnDps: 14,
+  drainPerSecond: 26, refillPerSecond: 16, rekindleSeconds: 2, rekindleMult: 1.5,
+  // Once the oil runs dry the lantern locks until it has gathered this
+  // much again — without the lock the sweep would flicker on and off at
+  // the bottom of the tank, which reads as a broken light, not a choice.
+  rechargeAt: 40,
+};
+export const OIL_MAX = 100;
+
+// Dawn Boons (v6): after every wave the dawn offers three blessings and
+// the Keeper takes one. Each is a real number the game already uses — a
+// stronger bolt, a longer bell, deeper pockets, hotter braziers, harder
+// cannon shells, iron walls, swifter towers, a fuller lantern.
+export const BOONS = {
+  emberHeart: { name: 'Ember Heart', blurb: 'Keeper bolts +30% damage.' },
+  longFuse: { name: 'Long Fuse', blurb: 'The great bell freezes +1s.' },
+  deepPockets: { name: 'Deep Pockets', blurb: '+40 shards, right now.' },
+  kindling: { name: 'Kindling', blurb: 'Braziers burn +40% damage.' },
+  frostbiteRounds: { name: 'Frostbite Rounds', blurb: 'Ember Cannons +25% damage.' },
+  ironWalls: { name: 'Iron Walls', blurb: 'Every Snow Wall +200 strength.' },
+  swiftHands: { name: 'Swift Hands', blurb: 'All towers fire 15% faster.' },
+  lanternOil: { name: 'Lantern Oil', blurb: 'Lantern +40 oil, refilled now.' },
+};
+
+// Turning the dawn (v6): STORMKEEPER's reroll, the one top-10 edge the
+// dawn did not have. Once per offer, the three cards are drawn again.
+export const REROLL_COST = 15;
 
 // A build plot is a stone circle beside a road where one tower can stand.
 // Wall slots sit ON a road; a wall there blocks the march.

@@ -14,7 +14,7 @@ export const ACTION_RESTART = 'restart';
 export function createInput(canvas) {
   const keys = new Set();
   const pressed = new Set();
-  const mouse = { x: 0, y: 0, down: false, clicked: false, rightClicked: false };
+  const mouse = { x: 0, y: 0, down: false, clicked: false, rightClicked: false, rightDown: false };
 
   function toLocal(e) {
     // Map to logical 1280x720 coordinates, not the canvas's 2x backing
@@ -37,7 +37,7 @@ export function createInput(canvas) {
     keys.add(k);
   });
   window.addEventListener('keyup', (e) => { keys.delete(keyName(e)); });
-  window.addEventListener('blur', () => { keys.clear(); pressed.clear(); mouse.down = false; });
+  window.addEventListener('blur', () => { keys.clear(); pressed.clear(); mouse.down = false; mouse.rightDown = false; });
   canvas.addEventListener('mousemove', (e) => {
     const p = toLocal(e);
     mouse.x = p.x; mouse.y = p.y;
@@ -46,9 +46,14 @@ export function createInput(canvas) {
     const p = toLocal(e);
     mouse.x = p.x; mouse.y = p.y;
     if (e.button === 0) { mouse.down = true; mouse.clicked = true; }
-    if (e.button === 2) mouse.rightClicked = true;
+    // Right button held is the Lantern Sweep (v6): rightDown stays true
+    // until the button comes up, so the Keeper can sweep the march.
+    if (e.button === 2) { mouse.rightClicked = true; mouse.rightDown = true; }
   });
-  window.addEventListener('mouseup', (e) => { if (e.button === 0) mouse.down = false; });
+  window.addEventListener('mouseup', (e) => {
+    if (e.button === 0) mouse.down = false;
+    if (e.button === 2) mouse.rightDown = false;
+  });
   canvas.addEventListener('contextmenu', (e) => { e.preventDefault(); });
 
   return {

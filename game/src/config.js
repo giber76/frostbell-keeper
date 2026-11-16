@@ -209,6 +209,16 @@ export const BOONS = {
 // dawn did not have. Once per offer, the three cards are drawn again.
 export const REROLL_COST = 15;
 
+// The Keeper's Ember Arts (v8): three aimed powers with cooldowns, so
+// the Keeper himself is a third verb beside the bell and the sweep —
+// Z freezes the march around him, X fans piercing embers at the mouse,
+// C kindles the hearth and quickens every tower.
+export const ARTS = {
+  nova: { key: 'z', name: 'Frost Nova', cooldown: 14, range: 220, freeze: 3, damage: 40 },
+  surge: { key: 'x', name: 'Ember Surge', cooldown: 10, bolts: 9, spread: 0.7, damage: 30, speed: 560 },
+  kindle: { key: 'c', name: 'Kindle', cooldown: 20, warmth: 10, rate: 2 / 3, seconds: 6 },
+};
+
 // The Moon Turns (v7): SUNWRIGHT's moving sun, in our own sky. The moon
 // crosses the square as the waves pass — low in the east on the first wave,
 // high over the hearth by the last — and the band of moonlight under it

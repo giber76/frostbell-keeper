@@ -2,7 +2,7 @@
 // playing the real update loop for a fixed number of ticks with a fixed seed.
 // Nothing here is a mock — the same code runs when a person plays.
 
-import { startGame, startWave, tryBuild } from './game.js';
+import { startGame, startWave, tryBuild, castArt } from './game.js';
 import { pickSlot } from './world.js';
 import { offerBoons } from './boons.js';
 import { beginWard, extendWard, endWard } from './wards.js';
@@ -131,6 +131,9 @@ export function stageShot(name, g, updateGame) {
       g.keeper.oil = g.keeper.oilMax;
       g.keeper.oilLocked = false;
       g.keeper.sweeping = true;
+      // Ember Surge (v8): fan the piercing bolts across the boss's road,
+      // so the frame shows the Keeper's own art in flight.
+      castArt(g, 'surge');
     }
     return { screen: 'wave' };
   }
@@ -138,24 +141,28 @@ export function stageShot(name, g, updateGame) {
     startGame(g, 'Keeper');
     buildDefence(g);
     g.wave = 16;
-    // A real night's numbers: seed 1's v7 self-test victory, so the staged
+    // A real night's numbers: seed 1's v8 self-test victory, so the staged
     // end screen shows what a won game actually scores. The kill ledger
-    // is the real distribution (sums to 957); built/upgraded/bells/wards
-    // are what the self-test actually posted — 29 towers built, 38
-    // upgrades, 67 bells tolled, 16 ember wards drawn, one a wave.
-    g.score = 40449;
+    // is the real distribution (sums to 957); built/upgraded/bells/wards/
+    // arts are what the self-test actually posted — 29 towers built, 38
+    // upgrades, 67 bells tolled, 16 ember wards drawn, 59 ember arts cast
+    // (20 novas, 38 surges, 1 kindle), one ward a wave.
+    g.score = 40232;
     g.kills = 957;
     g.warmth = 100;
     g.stats.killsByKind = { wraith: 346, wolf: 268, mite: 172, wisp: 68, golem: 83, bulwark: 17, alpha: 1, matron: 1, matriarch: 1 };
-    g.stats.bestCombo = 86;
+    g.stats.bestCombo = 88;
     g.stats.built = 29;
     g.stats.upgraded = 38;
     g.stats.bells = 67;
     g.stats.wardsDrawn = 16;
-    g.stats.shardsEarned = 9986;
+    // The Keeper's Ember Arts (v8): the real seed-1 split — twenty novas,
+    // thirty-eight surges, one kindle.
+    g.stats.artsCast = { nova: 20, surge: 38, kindle: 1 };
+    g.stats.shardsEarned = 9946;
     // Fifteen waves held means fifteen dawn blessings taken — a real
     // night's ledger, grouped by the end screen into kinds and counts.
-    g.boon.held = ['emberHeart', 'emberHeart', 'kindling', 'kindling', 'ironWalls', 'swiftHands', 'deepPockets', 'longFuse', 'frostbiteRounds', 'lanternOil', 'emberHeart', 'kindling', 'ironWalls', 'deepPockets', 'swiftHands'];
+    g.boon.held = ['frostbiteRounds', 'kindling', 'kindling', 'deepPockets', 'lanternOil', 'kindling', 'lanternOil', 'longFuse', 'swiftHands', 'swiftHands', 'ironWalls', 'ironWalls', 'kindling', 'deepPockets', 'frostbiteRounds'];
     g.stats.boonsTaken = 15;
     g.feed = ['Cannon shattered a Matriarch', 'Ward warded a Bulwark', 'Keeper slew a Wisp'];
     g.message = '';

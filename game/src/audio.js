@@ -70,6 +70,11 @@ export function createAudio() {
     leak() { tone(300, 0.35, 'sawtooth', 0.1, 90); noise(0.3, 0.08, 500); },
     horn() { tone(196, 0.5, 'sawtooth', 0.09, 196); tone(294, 0.5, 'sawtooth', 0.07, 294); },
     bell() { tone(523, 1.4, 'sine', 0.16); tone(784, 1.1, 'sine', 0.1); tone(1046, 0.9, 'sine', 0.06); },
+    // The Keeper's Ember Arts (v8): a nova's cold ring, a surge's
+    // rising fan, a kindle's warm flare.
+    nova() { tone(880, 0.35, 'sine', 0.12, 220); noise(0.25, 0.05, 900); },
+    surge() { tone(660, 0.12, 'triangle', 0.09, 990); tone(990, 0.1, 'triangle', 0.06, 1320); },
+    kindle() { tone(523, 0.2, 'sine', 0.1); tone(784, 0.3, 'sine', 0.08); },
     waveClear() { [523, 659, 784, 1046].forEach((f, i) => setTimeout(() => tone(f, 0.22, 'sine', 0.09), i * 90)); },
     win() { [523, 659, 784, 1046, 1318].forEach((f, i) => setTimeout(() => tone(f, 0.4, 'sine', 0.1), i * 130)); },
     lose() { [392, 330, 262, 196].forEach((f, i) => setTimeout(() => tone(f, 0.5, 'triangle', 0.09), i * 160)); },

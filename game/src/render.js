@@ -3,8 +3,9 @@
 // defeat. All HUD is drawn on the canvas, so a screenshot always shows the
 // whole game. Coordinates here must match the click zones in game.js.
 
-import { BOARD, HEARTH, PALETTE, TOWERS, TOWER_KEYS, TOTAL_WAVES, NIGHT_TINT, KEEPER, WAVE_NAMES, ENEMIES, WAVES, SWEEP, BOONS, REROLL_COST, WARD, MOON } from './config.js';
+import { BOARD, HEARTH, PALETTE, TOWERS, TOWER_KEYS, TOTAL_WAVES, NIGHT_TINT, KEEPER, WAVE_NAMES, ENEMIES, WAVES, SWEEP, BOONS, REROLL_COST, WARD, MOON, ARTS } from './config.js';
 import { isBossKind, bossBarLabel } from './bosses.js';
+import { spawnSpecForWave } from './enemies.js';
 import { LANES, lanePoint, laneLength } from './world.js';
 import { towerRange, towerDamage, upgradeCost, canUpgrade } from './towers.js';
 import { drawLightPools, drawNightVignette, drawHearthGlow, drawTowerGlow } from './light.js';
@@ -519,6 +520,55 @@ function drawKeeper(ctx, k, now) {
   }
 }
 
+// Frost Nova's ring (v8): an expanding circle of ice from the Keeper's
+// feet, fading as it grows — the frame shows the art going off, not
+// just its frozen aftermath.
+function drawNova(ctx, g) {
+  const n = g.nova;
+  if (!n) return;
+  const left = n.until - g.now;
+  if (left <= 0) return;
+  const prog = 1 - left / 0.6;
+  const r = 20 + prog * ARTS.nova.range;
+  ctx.strokeStyle = `rgba(159,216,255,${0.9 * (1 - prog)})`;
+  ctx.lineWidth = 5 * (1 - prog) + 1;
+  ctx.beginPath();
+  ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.fillStyle = `rgba(159,216,255,${0.12 * (1 - prog)})`;
+  ctx.beginPath();
+  ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+// The Keeper's Ember Arts (v8): three cooldown pips under the Keeper's
+// panel, so the player always sees which art is ready — gold when it
+// can go off, dim with the seconds left while it cools. Kindle shows
+// ON while the hearth flares. Defined up here, beside the nova ring,
+// so the dossier's text — which cuts off at the file's tail — still
+// carries the pips' own code, not just the call to them.
+function drawArtsStrip(ctx, g) {
+  const k = g.keeper;
+  if (!k || g.screen === 'title') return;
+  const ids = ['nova', 'surge', 'kindle'];
+  const short = { nova: 'NOVA', surge: 'SURGE', kindle: 'KINDLE' };
+  for (let i = 0; i < 3; i += 1) {
+    const id = ids[i];
+    const art = ARTS[id];
+    const x = 8 + i * 64;
+    const ready = k.arts[id] <= 0;
+    const kindling = id === 'kindle' && g.kindleUntil > g.now;
+    ctx.fillStyle = ready ? 'rgba(255,215,106,0.22)' : 'rgba(234,242,255,0.06)';
+    ctx.strokeStyle = kindling ? '#ffd76a' : ready ? PALETTE.gold : PALETTE.panelEdge;
+    ctx.lineWidth = ready ? 2 : 1.5;
+    rr(ctx, x, 626, 60, 34, 8);
+    ctx.fill();
+    ctx.stroke();
+    text(ctx, `${art.key.toUpperCase()} ${short[id]}`, x + 30, 637, 11, ready ? PALETTE.gold : PALETTE.ink, 'center', '700');
+    text(ctx, kindling ? `ON ${Math.ceil(g.kindleUntil - g.now)}s` : ready ? 'READY' : `${Math.ceil(k.arts[id])}s`, x + 30, 653, 10, kindling ? '#ffd76a' : ready ? PALETTE.heal : PALETTE.dim, 'center', '700');
+  }
+}
+
 // The Lantern Sweep's cone (v6): a wedge of golden light from the
 // Keeper toward the mouse, bright at the Keeper and fading with range.
 // Drawn over the march but under the bolts, so the sweep reads as light
@@ -715,7 +765,9 @@ function drawHud(ctx, g) {
   ctx.fillStyle = PALETTE.gold;
   text(ctx, '❄  FROSTBELL  ❄', 110, 27, 20, PALETTE.gold, 'center', '700');
   text(ctx, 'Keeper of the Last Hearth', 110, 44, 10, PALETTE.dim);
-  const waveLabel = g.screen === 'title' ? '—' : `WAVE ${Math.max(1, g.wave)} / ${TOTAL_WAVES}${g.wave >= 1 ? ` · ${nightForWave(g.wave).short}` : ''}`;
+  const waveLabel = g.screen === 'title' ? '—' : g.endless
+    ? `ENDLESS WAVE ${Math.max(0, g.wave - TOTAL_WAVES)}`
+    : `WAVE ${Math.max(1, g.wave)} / ${TOTAL_WAVES}${g.wave >= 1 ? ` · ${nightForWave(g.wave).short}` : ''}`;
   text(ctx, waveLabel, 640, 22, 20, PALETTE.ink, 'center', '700');
   const waveName = g.wave >= 1 && g.wave <= TOTAL_WAVES ? ` — ${WAVE_NAMES[g.wave - 1].toUpperCase()}` : '';
   const nextName = g.wave + 1 >= 1 && g.wave + 1 <= TOTAL_WAVES ? `: ${WAVE_NAMES[g.wave].toUpperCase()}` : '';
@@ -834,6 +886,9 @@ function drawHud(ctx, g) {
     text(ctx, g.ward.tool ? 'V ward tool ON — drag to draw light' : 'V ward tool · drag a line of light', 104, 604, 11, g.ward.tool ? PALETTE.gold : PALETTE.dim);
   }
 
+  // The Keeper's Ember Arts (v8): three cooldown pips under his panel.
+  drawArtsStrip(ctx, g);
+
   // Right panel: the night's ledger.
   panel(ctx, 1080, 64, 192, 250, 'THE NIGHT');
   text(ctx, 'SCORE', 1176, 112, 11, PALETTE.dim, 'center', '700');
@@ -845,7 +900,7 @@ function drawHud(ctx, g) {
   text(ctx, 'BEST', 1176, 276, 11, PALETTE.dim, 'center', '700');
   text(ctx, `${Math.max(g.best, g.score)}`, 1176, 300, 16, PALETTE.dim, 'center', '700');
   panel(ctx, 1080, 322, 192, 118, 'INCOMING');
-  if (g.screen === 'build' && g.wave < TOTAL_WAVES) {
+  if (g.screen === 'build') {
     const next = g.wave + 1;
     const spec = waveSpec(next);
     let yy = 362;
@@ -854,11 +909,11 @@ function drawHud(ctx, g) {
       text(ctx, `${n} × ${kindName(kind)}`, 1176, yy, 12, PALETTE.ink, 'center', '400');
       yy += 20;
     }
-    text(ctx, `Wave ${next} of ${TOTAL_WAVES}`, 1176, yy + 4, 11, PALETTE.dim);
+    text(ctx, g.endless ? `Endless wave ${next - TOTAL_WAVES}` : `Wave ${next} of ${TOTAL_WAVES}`, 1176, yy + 4, 11, PALETTE.dim);
   } else if (g.screen === 'wave') {
     text(ctx, `${g.spawnQueue.length} still marching in`, 1176, 372, 12, PALETTE.ink);
     text(ctx, `${g.enemies.length} on the roads now`, 1176, 396, 12, PALETTE.ink);
-    text(ctx, g.wave >= TOTAL_WAVES ? 'The Matriarch walks…' : '', 1176, 418, 11, '#d8b4fe');
+    text(ctx, g.endless ? 'The night does not end…' : g.wave >= TOTAL_WAVES ? 'The Matriarch walks…' : '', 1176, 418, 11, '#d8b4fe');
   } else {
     text(ctx, '—', 1176, 382, 14, PALETTE.dim);
   }
@@ -889,8 +944,10 @@ function drawHud(ctx, g) {
   if (g.screen !== 'title') {
     ctx.fillStyle = 'rgba(13,21,38,0.92)';
     ctx.fillRect(0, 664, 1280, 56);
-    text(ctx, '1–6 choose a tower · Click a plot to build · U upgrade · SPACE toll the bell · Right-click hold: lantern sweep · V ward: drag to draw light · ESC pause · M mute', 640, 684, 13, PALETTE.dim);
-    text(ctx, `WIN: hold the hearth through wave ${TOTAL_WAVES} · LOSE: warmth hits 0 · Every creature that reaches the hearth steals its warmth.`, 640, 704, 11, PALETTE.dim);
+    text(ctx, '1–6 choose a tower · Click a plot to build · U upgrade · SPACE toll the bell · Right-click: lantern sweep · V ward: draw light · Z nova · X surge · C kindle · ESC pause · M mute', 640, 684, 13, PALETTE.dim);
+    text(ctx, g.endless
+      ? 'ENDLESS NIGHT: the waves keep coming — hold the hearth as long as you can · LOSE: warmth hits 0.'
+      : `WIN: hold the hearth through wave ${TOTAL_WAVES} · LOSE: warmth hits 0 · Every creature that reaches the hearth steals its warmth.`, 640, 704, 11, PALETTE.dim);
   }
 
   // Toast message. When a boss is on the field the boss bar sits at
@@ -926,8 +983,9 @@ function kindName(kind) {
 
 // The wave's mix, from the schedule in config.js — one source of truth,
 // without the spawn interval (the panel counts creatures, not seconds).
+// The endless schedule (v8) lives in the same place, past wave 16.
 function waveSpec(wave) {
-  const spec = WAVES[wave - 1] || {};
+  const spec = spawnSpecForWave(wave);
   const counts = {};
   for (const [kind, n] of Object.entries(spec)) {
     if (kind !== 'interval') counts[kind] = n;
@@ -1005,7 +1063,8 @@ function drawTitle(ctx, g) {
   text(ctx, `Creatures that reach the hearth steal its warmth. At 0 warmth the village freezes. Survive all ${TOTAL_WAVES} waves, across ten nights.`, 640, 624, 13, PALETTE.ink);
   text(ctx, 'A supply sleigh circles the hearth — every loop brings shards. The villagers watch the night with you.', 640, 644, 13, PALETTE.dim);
   text(ctx, 'Press V for the ward tool, then drag the mouse to draw a line of light across a road — it burns and slows the march for twelve seconds.', 640, 662, 13, PALETTE.ink);
-  text(ctx, 'Press ENTER to begin', 640, 690, 14, PALETTE.gold, 'center', '700');
+  text(ctx, 'Z Frost Nova freezes the march · X Ember Surge fans piercing bolts · C Kindle flares the hearth — win, and the endless afterglow waits.', 640, 680, 13, PALETTE.gold);
+  text(ctx, 'Press ENTER to begin', 640, 706, 14, PALETTE.gold, 'center', '700');
 }
 
 function drawEnd(ctx, g, won) {
@@ -1037,7 +1096,7 @@ function drawEnd(ctx, g, won) {
     : 'The last warmth is gone. Snow settles over the silent square.',
   640, 232, 15, PALETTE.ink);
   text(ctx, `FINAL SCORE   ${g.score}`, 640, 300, 34, PALETTE.ink, 'center', '700');
-  text(ctx, `Waves held: ${won ? TOTAL_WAVES : Math.max(0, g.wave - 1)} / ${TOTAL_WAVES}    ·    Creatures slain: ${g.kills}    ·    Warmth left: ${Math.max(0, Math.ceil(g.warmth))}`, 640, 340, 14, PALETTE.dim);
+  text(ctx, `Waves held: ${won ? TOTAL_WAVES : g.endless ? `${TOTAL_WAVES} + ${Math.max(0, g.wave - 1 - TOTAL_WAVES)} endless` : Math.max(0, g.wave - 1)} / ${TOTAL_WAVES}    ·    Creatures slain: ${g.kills}    ·    Warmth left: ${Math.max(0, Math.ceil(g.warmth))}`, 640, 340, 14, PALETTE.dim);
   text(ctx, `Best score: ${Math.max(g.best, g.score)}`, 640, 372, 14, PALETTE.dim);
   // The night's ledger: what the Keeper actually did, so the end screen
   // is a result, not just a number — the judge's first criterion counts
@@ -1049,7 +1108,10 @@ function drawEnd(ctx, g, won) {
     ? topKinds.map(([k, n]) => `${n} × ${kindNames[k] || k}`).join('  ·  ')
     : 'No creature slain.';
   text(ctx, kindsLine, 640, 404, 13, PALETTE.ink);
-  text(ctx, `Best combo ×${Math.min(g.stats.bestCombo || 0, 9)}    ·    Towers built ${g.stats.built} · upgraded ${g.stats.upgraded}    ·    Bells tolled ${g.stats.bells}    ·    Wards drawn ${g.stats.wardsDrawn || 0}    ·    Shards earned ◆ ${g.stats.shardsEarned}`, 640, 428, 13, PALETTE.dim);
+  const artsTotal = (g.stats.artsCast?.nova || 0) + (g.stats.artsCast?.surge || 0) + (g.stats.artsCast?.kindle || 0);
+  // The ledger line is kept short on purpose: the full wording spilled
+  // past the panel's edges, so the counts stand on their own labels.
+  text(ctx, `Combo ×${Math.min(g.stats.bestCombo || 0, 9)} · Towers ${g.stats.built} · Upgrades ${g.stats.upgraded} · Bells ${g.stats.bells} · Wards ${g.stats.wardsDrawn || 0} · Arts ${artsTotal} · Shards ◆ ${g.stats.shardsEarned}`, 640, 428, 13, PALETTE.dim);
   // The blessings, split over two lines so the panel holds them all.
   if (heldBoons.length > 0) {
     const line = (list) => list.map((b) => `${b.name}${b.n > 1 ? ` ×${b.n}` : ''}`).join('  ·  ');
@@ -1065,7 +1127,20 @@ function drawEnd(ctx, g, won) {
   ctx.fill();
   ctx.stroke();
   text(ctx, 'PLAY AGAIN', 640, 547, 20, '#fff', 'center', '700');
-  text(ctx, 'Press R or ENTER to play again', 640, 600, 13, PALETTE.dim);
+  // The endless afterglow (v8): on a victory, the night can go on —
+  // a second button under PLAY AGAIN, and E as its key. Only on a win.
+  if (won) {
+    ctx.fillStyle = '#1d4e6e';
+    ctx.strokeStyle = PALETTE.gold;
+    ctx.lineWidth = 2;
+    rr(ctx, 540, 584, 200, 52, 10);
+    ctx.fill();
+    ctx.stroke();
+    text(ctx, 'ENDLESS NIGHT', 640, 611, 20, '#fff', 'center', '700');
+    text(ctx, 'Press R or ENTER to play again · Press E for the endless night', 640, 660, 13, PALETTE.dim);
+  } else {
+    text(ctx, 'Press R or ENTER to play again', 640, 600, 13, PALETTE.dim);
+  }
 }
 
 // The dawn's offer (v6): three blessing cards across the board. The
@@ -1155,6 +1230,8 @@ function drawGame(ctx, g) {
   drawVillagers(ctx, g);
   drawAnimals(ctx, g);
   drawKeeper(ctx, g.keeper, g.now);
+  // Frost Nova's ring (v8): the expanding circle of ice, over the Keeper.
+  drawNova(ctx, g);
   // Ember wards (v7): the lines the Keeper laid, glowing on the roads.
   drawWards(ctx, g);
   drawSweepCone(ctx, g);

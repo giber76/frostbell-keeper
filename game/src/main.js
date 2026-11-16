@@ -72,7 +72,8 @@ function runSelftestMode() {
     const moonRange = result.moonXs && result.moonXs.length > 0
       ? ` moon=${result.moonXs[0]}-${result.moonXs[result.moonXs.length - 1]}`
       : '';
-    document.title = `SELFTEST ok screen=${result.screen} waves=${result.wavesCleared} kills=${result.kills} score=${result.score} warmth=${result.warmth} steps=${result.steps} bestCombo=${result.bestCombo} built=${result.built} upgraded=${result.upgraded} bells=${result.bells} shardsEarned=${result.shardsEarned} boons=${result.boonsTaken} sweep=${result.sweepHeldSeconds}s wards=${result.wardsDrawn}${moonRange} kinds=${JSON.stringify(result.killsByKind)}`;
+    const artsTotal = result.artsCast ? (result.artsCast.nova + result.artsCast.surge + result.artsCast.kindle) : 0;
+    document.title = `SELFTEST ok screen=${result.screen} waves=${result.wavesCleared} kills=${result.kills} score=${result.score} warmth=${result.warmth} steps=${result.steps} bestCombo=${result.bestCombo} built=${result.built} upgraded=${result.upgraded} bells=${result.bells} shardsEarned=${result.shardsEarned} boons=${result.boonsTaken} sweep=${result.sweepHeldSeconds}s wards=${result.wardsDrawn} arts=${artsTotal} artsDetail=${JSON.stringify(result.artsCast)}${moonRange} kinds=${JSON.stringify(result.killsByKind)}`;
   } else {
     document.title = `ERR: selftest failed ${JSON.stringify(result).slice(0, 300)}`;
   }

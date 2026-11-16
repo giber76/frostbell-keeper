@@ -11,7 +11,8 @@ import { moonForWave, setMoon, applyMoon, moonKeeperMult } from './moon.js';
 import { beginWard, extendWard, endWard, applyWards, wardCost, wardLength } from './wards.js';
 import { createRandom } from './random.js';
 import { createWorld, pickSlot, pickTowerAt } from './world.js';
-import { makeEnemy, waveSpawnList, updateEnemy } from './enemies.js';
+import { makeEnemy, waveSpawnList, spawnSpecForWave, updateEnemy } from './enemies.js';
+import { castAbility, tickArts } from './abilities.js';
 import { makeTower, updateTower, upgradeCost, canUpgrade, setWind, setBoonFactors } from './towers.js';
 import { makeKeeper, updateKeeper, tollBell } from './keeper.js';
 import { makeParticles, spawnSnow, updateParticles, burst, floater } from './particles.js';
@@ -42,6 +43,13 @@ export function createGame(seed, audio) {
     seed, random, world, village, animals, melody, particles, audio,
     screen: SCREEN_TITLE,
     prevScreen: SCREEN_BUILD,
+    // The endless afterglow (v8): after the victory, the night can go
+    // on — waves without end, the hearth still burning.
+    endless: false,
+    // Kindle (v8): the hearth flares until this time, and the towers
+    // quicken while it holds. Nova's ring (v8): an expanding circle of
+    // ice, drawn while it lasts.
+    kindleUntil: 0, nova: null,
     now: 0,
     wave: 0,
     wind: windForWave(1),
@@ -82,6 +90,8 @@ export function createGame(seed, audio) {
       boltsFired: 0, bells: 0, built: 0, upgraded: 0,
       killsByKind: {}, bestCombo: 0, shardsEarned: 0, boonsTaken: 0,
       wardsDrawn: 0,
+      // The Keeper's Ember Arts (v8): how many times each art went off.
+      artsCast: { nova: 0, surge: 0, kindle: 0 },
     },
     difficulty: 'Keeper',
     muted: false,
@@ -163,7 +173,9 @@ function say(g, text, seconds) {
 }
 
 export function startWave(g) {
-  if (g.wave >= TOTAL_WAVES) return;
+  // The endless afterglow (v8): past wave 16 the waves keep coming —
+  // the guard that ends the night at sixteen does not apply there.
+  if (g.wave >= TOTAL_WAVES && !g.endless) return;
   g.wave += 1;
   g.combo = 0;
   // The dawn's offer closes when the wave starts: a blessing not taken
@@ -182,7 +194,9 @@ export function startWave(g) {
   g.spawnTimer = 0.5;
   g.screen = SCREEN_WAVE;
   g.audio.horn();
-  say(g, `Wave ${g.wave} of ${TOTAL_WAVES} — ${g.wind.name}: ${g.wind.blurb}`, 4);
+  say(g, g.endless
+    ? `Endless wave ${g.wave - TOTAL_WAVES} — the night does not end: ${g.wind.name}: ${g.wind.blurb}`
+    : `Wave ${g.wave} of ${TOTAL_WAVES} — ${g.wind.name}: ${g.wind.blurb}`, 4);
 }
 
 function endWave(g) {
@@ -192,7 +206,10 @@ function endWave(g) {
   g.stats.shardsEarned += 12;
   g.combo = 0;
   g.audio.waveClear();
-  if (g.wave >= TOTAL_WAVES) {
+  // The endless afterglow (v8): the sixteenth wave ends the night only
+  // when the Keeper has not chosen the afterglow — an endless wave
+  // clears like any other, into a dawn offer and a build phase.
+  if (g.wave >= TOTAL_WAVES && !g.endless) {
     g.score += g.warmth * 5;
     g.screen = SCREEN_VICTORY;
     g.audio.win();
@@ -218,6 +235,29 @@ function endWave(g) {
   g.screen = SCREEN_BUILD;
   g.buildTimer = BUILD_SECONDS;
   say(g, `Wave ${g.wave} held! +${bonus} score, +12 shards — build, then ENTER`, 4);
+}
+
+// The endless afterglow (v8): from the victory screen, the Keeper can
+// keep the night going instead of playing again — the hearth, the score
+// and the towers carry over, and the waves grow past sixteen. Only
+// from a victory, and only once per night.
+export function beginEndless(g) {
+  if (g.screen !== SCREEN_VICTORY || g.endless) return false;
+  g.endless = true;
+  g.screen = SCREEN_BUILD;
+  g.buildTimer = BUILD_SECONDS;
+  g.boonOffer = offerBoons(g);
+  g.boonPicked = false;
+  g.boon.rerolled = false;
+  say(g, 'The night does not end — the endless afterglow begins. Wave 17 marches.', 5);
+  g.audio.horn();
+  return true;
+}
+
+// One art, cast through the game's own bolt pipe — the shots module and
+// the self-test call this the same way the keys do.
+export function castArt(g, id) {
+  return castAbility(g, id, (b) => fireBolt(g, b));
 }
 
 export function tryBuild(g, slot) {
@@ -287,7 +327,9 @@ function fireBolt(g, bolt) {
   // taken at dawn (Ember Heart) feeds them too — and so does the moon
   // (v7), when the Keeper stands in its band.
   if (bolt.from === 'keeper') bolt.damage = Math.round(bolt.damage * g.wind.boltDamage * g.boon.boltMult * moonKeeperMult(g.keeper.x));
-  g.bolts.push({ ...bolt, alive: true, hit: false });
+  // A piercing surge bolt (v8) remembers what it already passed
+  // through, so it never bites the same creature twice.
+  g.bolts.push({ ...bolt, alive: true, hit: false, hitIds: bolt.pierce ? new Set() : null });
   g.stats.boltsFired += 1;
 }
 
@@ -327,6 +369,9 @@ function updateBolts(g, dt) {
       if (b.x < 200 || b.x > 1080 || b.y < 56 || b.y > 664) { b.alive = false; continue; }
       for (const e of g.enemies) {
         if (e.dead || e.leaked) continue;
+        // A piercing surge bolt (v8) passes through the march: it
+        // bites each creature once and keeps flying to the board's edge.
+        if (b.pierce && b.hitIds && b.hitIds.has(e)) continue;
         if (Math.hypot(e.x - b.x, e.y - b.y) < e.def.radius + b.radius) {
           e.hp -= b.damage;
           e.lastHitBy = 'Keeper';
@@ -335,6 +380,7 @@ function updateBolts(g, dt) {
           e.burnDps = Math.max(e.burnDps, 6);
           burst(g.particles, e.x, e.y, '#ff9a3d', 5, 100);
           if (e.hp <= 0) e.dead = true;
+          if (b.pierce) { b.hitIds.add(e); continue; }
           b.alive = false;
           break;
         }
@@ -488,6 +534,10 @@ function updateWavePlay(g, dt, input) {
       burst(g.particles, g.keeper.x, g.keeper.y, '#9fd8ff', 20, 200);
     }
   }
+  // The Keeper's Ember Arts (v8): Z frost nova, X ember surge, C kindle.
+  if (input.wasPressed('z')) castArt(g, 'nova');
+  if (input.wasPressed('x')) castArt(g, 'surge');
+  if (input.wasPressed('c')) castArt(g, 'kindle');
   for (const slot of [...g.world.plots, ...g.world.walls]) {
     if (!slot.tower) continue;
     const events = updateTower(slot.tower, dt, g.now, g.enemies, (b) => fireBolt(g, b));
@@ -506,7 +556,8 @@ function updateWavePlay(g, dt, input) {
 function requireWaveInterval(wave) {
   // The spawn interval lives in the wave schedule itself (config.js), so
   // the schedule is the one source of truth — no second list to drift.
-  return (WAVES[wave - 1] && WAVES[wave - 1].interval) || 1;
+  // The endless schedule (v8) lives in the same place, past wave 16.
+  return spawnSpecForWave(wave).interval || 1;
 }
 
 export function updateGame(g, dt, input) {
@@ -550,10 +601,14 @@ export function updateGame(g, dt, input) {
     return;
   }
   if (g.screen === SCREEN_VICTORY || g.screen === SCREEN_DEFEAT) {
-    if (input.action('restart') || input.mouse.clicked) {
-      const m = input.mouse;
-      const inButton = m.x > 540 && m.x < 740 && m.y > 520 && m.y < 572;
-      if (input.action('restart') || inButton) startGame(g, g.difficulty);
+    const m = input.mouse;
+    const inPlayAgain = m.x > 540 && m.x < 740 && m.y > 520 && m.y < 572;
+    const inEndless = m.x > 540 && m.x < 740 && m.y > 584 && m.y < 636;
+    if (input.action('restart') || (input.mouse.clicked && inPlayAgain)) {
+      startGame(g, g.difficulty);
+    } else if (g.screen === SCREEN_VICTORY && (input.wasPressed('e') || (input.mouse.clicked && inEndless))) {
+      // The endless afterglow (v8): E, or the button under PLAY AGAIN.
+      beginEndless(g);
     }
     return;
   }
@@ -562,6 +617,8 @@ export function updateGame(g, dt, input) {
     g.screen = SCREEN_PAUSED;
     return;
   }
+  // The Keeper's Ember Arts (v8): cooldowns tick in build and wave alike.
+  if (g.screen === SCREEN_BUILD || g.screen === SCREEN_WAVE) tickArts(g, dt);
   if (g.screen === SCREEN_BUILD) {
     if (!g.keeper) g.keeper = makeKeeper();
     handleBuildInput(g, input);
@@ -643,6 +700,16 @@ export function runSelfTest(g) {
     // each wave, so the report shows it really turned.
     let wardWave = 0;
     const moonXs = [];
+    // The Keeper's Ember Arts (v8): the scripted Keeper casts on a
+    // rhythm — kindle when the hearth runs cool, nova when the march
+    // closes in, surge when it stands off — so the self-test exercises
+    // the arts the way a player would.
+    let lastArtAt = 0;
+    // Kindle would never fire on its own in this strong defence —
+    // warmth never dips below 75 — so the scripted Keeper kindles once
+    // mid-game, through the real cast path, to prove the flare and the
+    // tower quickening run.
+    let kindleTested = false;
     // Sixteen waves take longer than ten: thirty minutes of sim time.
     while (steps < 60 * 60 * 30 && g.screen !== SCREEN_VICTORY && g.screen !== SCREEN_DEFEAT) {
       // Between waves, a real player spends: rebuild chewed walls, upgrade towers.
@@ -696,6 +763,19 @@ export function runSelfTest(g) {
           }
         }
       }
+      // One art every eight seconds of wave time, through the real
+      // cast path — cooldowns, the nova ring, the piercing bolts, the
+      // kindle flare all run, never a shortcut.
+      if (g.screen === SCREEN_WAVE && g.now - lastArtAt > 8) {
+        lastArtAt = g.now;
+        if (g.warmth < 75) castArt(g, 'kindle');
+        else if (g.enemies.some((e) => Math.hypot(e.x - g.keeper.x, e.y - g.keeper.y) < 220)) castArt(g, 'nova');
+        else if (g.enemies.length > 0) castArt(g, 'surge');
+      }
+      if (g.screen === SCREEN_WAVE && g.wave === 8 && !kindleTested) {
+        kindleTested = true;
+        castArt(g, 'kindle');
+      }
       updateGame(g, 1 / 60, fakeInput);
       steps += 1;
     }
@@ -720,6 +800,7 @@ export function runSelfTest(g) {
       boonsHeld: g.boon.held,
       sweepHeldSeconds: g.keeper ? Math.round(g.keeper.sweepHeld * 10) / 10 : 0,
       wardsDrawn: g.stats.wardsDrawn,
+      artsCast: g.stats.artsCast,
       moonXs,
       errors,
     };

@@ -12,6 +12,9 @@ export function makeKeeper() {
     walkPhase: 0, moving: false,
     // The lantern's oil: the sweep drinks it, the night refills it.
     oil: OIL_MAX, oilMax: OIL_MAX, sweeping: false, sweepHeld: 0, oilLocked: false,
+    // The Keeper's Ember Arts (v8): three aimed powers, each with its
+    // own cooldown — Z frost nova, X ember surge, C kindle.
+    arts: { nova: 0, surge: 0, kindle: 0 },
   };
 }
 

@@ -2,7 +2,7 @@
 // a wall or the hearth. Each creature walks its road toward the hearth; a
 // snow wall on that road makes it stop and chew the wall instead.
 
-import { ENEMIES, enemyHp, WAVES } from './config.js';
+import { ENEMIES, enemyHp, WAVES, TOTAL_WAVES } from './config.js';
 import { isBossKind, bossEnrageFactor } from './bosses.js';
 import { laneLength, lanePoint, wallOnLane } from './world.js';
 
@@ -38,8 +38,31 @@ export function makeEnemy(kind, lane, wave, random) {
 }
 
 // The spawn list for a wave, shuffled so the roads are not predictable.
+// The endless afterglow (v8): past wave 16 the night does not end.
+// Each endless wave grows from the Matriarch's own wave — more of
+// every kind, a Matron every third endless wave, the Matriarch
+// herself every fifth — and the spawn quickens, so the afterglow
+// is a test of endurance, not a victory lap.
+export function spawnSpecForWave(wave) {
+  if (wave <= TOTAL_WAVES) return WAVES[wave - 1];
+  const n = wave - TOTAL_WAVES;
+  const base = WAVES[TOTAL_WAVES - 1];
+  return {
+    wraith: base.wraith + 2 * n,
+    wolf: base.wolf + 2 * n,
+    mite: base.mite + n,
+    wisp: base.wisp + n,
+    golem: base.golem + n,
+    bulwark: 2,
+    alpha: 0,
+    matron: n % 3 === 0 ? 1 : 0,
+    matriarch: n % 5 === 0 ? 1 : 0,
+    interval: Math.max(0.5, 0.6 - 0.02 * n),
+  };
+}
+
 export function waveSpawnList(wave, random) {
-  const spec = WAVES[wave - 1];
+  const spec = spawnSpecForWave(wave);
   const lanes = ['N', 'E', 'S', 'W'];
   const list = [];
   for (const kind of ['wraith', 'wolf', 'mite', 'wisp', 'golem', 'bulwark', 'alpha', 'matron', 'matriarch']) {

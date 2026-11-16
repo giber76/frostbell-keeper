@@ -23,6 +23,15 @@ export function setBoonFactors(factors) {
   boonFactors = factors || { brazier: 1, cannon: 1, rate: 1 };
 }
 
+// Kindle (v8): the hearth's flare quickens every tower for six
+// seconds — the same once-per-wave setter the wind uses, applied
+// every frame while the flare holds.
+let kindleRate = 1;
+
+export function setKindleRate(m) {
+  kindleRate = m || 1;
+}
+
 export function towerCost(kind, level) {
   const base = TOWERS[kind].cost;
   if (level <= 1) return base;
@@ -90,7 +99,7 @@ export function updateTower(tower, dt, now, enemies, addBolt) {
   tower.rekindled = tower.rekindledUntil > now;
   // A blessed tower (v6: Swift Hands) fires faster; the rate lives in
   // the one local, so every branch below pays it the same way.
-  const rate = def.rate * boonFactors.rate;
+  const rate = def.rate * boonFactors.rate * kindleRate;
   if (tower.cooldown > 0) tower.cooldown -= dt;
   if (tower.kind === 'wall') return events;
   if (tower.kind === 'brazier') {

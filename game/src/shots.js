@@ -1,40 +1,49 @@
-// Screenshot scenes: deterministic staged states of the real game, built by
-// playing the real update loop for a fixed number of ticks with a fixed seed.
-// Nothing here is a mock — the same code runs when a person plays.
+// Screenshot scenes: deterministic staged states of the real game, built
+// by playing the real update loop for a fixed number of ticks with a fixed
+// seed. Nothing here is a mock — the same code runs when a person plays.
 
-import { startGame, startWave, tryBuild, castArt } from './game.js';
-import { pickSlot } from './world.js';
-import { offerBoons } from './boons.js';
-import { beginWard, extendWard, endWard } from './wards.js';
+import { startGame, startNight, runSelfTest } from './game.js';
+import { placeMirror } from './mirrors.js';
+import { HEARTH, MIRROR } from './config.js';
+import { createScriptedInput } from './input.js';
 
-const IDLE_INPUT = {
-  keys: new Set(), pressed: new Set(),
-  mouse: { x: 640, y: 360, down: false, clicked: false, rightClicked: false },
-  down: () => false,
-  wasPressed: () => false,
-  action: () => false,
-  endFrame: () => {},
-};
-
-// Build a believable mid-game defence: towers on the plots, walls on the roads.
-function buildDefence(g) {
+// A believable mid-game mirror set: a diamond above the hearth, two
+// turning the beam left, two turning it right.
+function layMirrors(g) {
+  g.embers = 400;
   const plan = [
-    ['brazier', 520, 250], ['brazier', 760, 250], ['brazier', 520, 470], ['brazier', 760, 470],
-    ['cannon', 300, 150], ['cannon', 980, 150], ['cannon', 300, 570], ['cannon', 980, 570],
-    ['bell', 420, 250], ['bell', 860, 470],
-    ['lantern', 420, 470], ['mortar', 860, 250],
+    [520, 470, Math.PI / 4],
+    [760, 470, -Math.PI / 4],
+    [400, 300, Math.PI / 4],
+    [880, 300, -Math.PI / 4],
   ];
-  g.shards = 2000;
-  for (const [kind, x, y] of plan) {
-    g.selectedKind = kind;
-    const slot = pickSlot(g.world, x, y);
-    if (slot) tryBuild(g, slot);
+  for (const [x, y, a] of plan) {
+    const mm = placeMirror(g.mirrors, x, y);
+    mm.angle = a;
+    g.embers -= MIRROR.cost;
+    g.stats.mirrorsPlaced += 1;
   }
-  for (const w of g.world.walls) {
-    g.selectedKind = 'wall';
-    if (!w.tower) tryBuild(g, w);
+  g.embers = 120;
+}
+
+// Aim the beam at the nearest living creature; focus when it is armored
+// or a boss, or when the meter is nearly full.
+function aimAtNearest(g, input) {
+  let best = null;
+  let bestD = 1e9;
+  for (const e of g.enemies) {
+    const d = Math.hypot(e.x - HEARTH.x, e.y - HEARTH.y);
+    if (d < bestD) { bestD = d; best = e; }
   }
-  g.shards = 240;
+  if (best) {
+    input.mouse.x = best.x;
+    input.mouse.y = best.y;
+    input.mouse.down = best.kind === 'golem' || best.kind === 'matriarch' || g.focus > 85;
+  } else {
+    input.mouse.x = 640;
+    input.mouse.y = 200;
+    input.mouse.down = false;
+  }
 }
 
 export function stageShot(name, g, updateGame) {
@@ -42,151 +51,59 @@ export function stageShot(name, g, updateGame) {
     return { screen: 'title' };
   }
   if (name === 'build') {
-    startGame(g, 'Keeper');
-    buildDefence(g);
+    startGame(g);
+    layMirrors(g);
     g.buildTimer = 18;
-    g.message = 'Build your defences — press ENTER when ready';
+    g.message = 'Place mirrors, take a gift — press ENTER when the night is ready';
     g.messageUntil = 9999;
-    g.selectedKind = 'cannon';
-    // Stage the dawn's offer (v6): the three blessing cards over the
-    // board, so the choice panel can be seen and checked as a scene.
-    g.boonOffer = offerBoons(g);
-    g.boonPicked = false;
     return { screen: 'build' };
   }
   if (name === 'play') {
-    startGame(g, 'Keeper');
-    buildDefence(g);
-    // Stage the final wave — "The Frost Matriarch" — and put the boss
-    // first in the spawn queue, so the frame shows her with the boss bar
-    // while the rest of the wave is still marching in. The loop below
-    // then plays it for real; the real game still spawns her last.
-    g.wave = 15;
-    startWave(g);
-    // The staged night took a blessing after wave 15 — Ember Heart — set
-    // before the wave plays, so the Keeper's bolts in the frame really
-    // are the stronger ones and the toast names a real choice.
-    g.boon.held = ['emberHeart'];
-    g.boon.boltMult = 1.3;
-    g.message = 'Dawn blessing taken: Ember Heart — Keeper bolts +30% damage';
-    g.messageUntil = 9999;
-    const bossAt = g.spawnQueue.findIndex((s) => s.kind === 'matriarch');
-    if (bossAt >= 0) {
-      const [bossSpawn] = g.spawnQueue.splice(bossAt, 1);
-      g.spawnQueue.unshift(bossSpawn);
+    startGame(g);
+    layMirrors(g);
+    // Stage night five, the middle of the game: the march is thick, the
+    // mirrors are up, and the beam is doing the work.
+    g.night = 4;
+    startNight(g);
+    const input = createScriptedInput();
+    // Play twelve real seconds: the keeper hunts the nearest creature
+    // while the march closes in, so the frame shows the beam burning
+    // through the frost with mirrors bouncing it around the pillars.
+    for (let i = 0; i < 60 * 12 && g.screen === 'night'; i += 1) {
+      aimAtNearest(g, input);
+      updateGame(g, 1 / 60, input);
+      input.endFrame();
     }
-    const aim = {
-      ...IDLE_INPUT,
-      mouse: { x: 700, y: 300, down: true, clicked: false, rightClicked: false },
-    };
-    // Wait until the Matriarch is on the field, keeper shooting the
-    // nearest creature meanwhile (5 real seconds at most).
-    for (let i = 0; i < 60 * 5 && g.screen === 'wave'; i += 1) {
-      let best = null;
-      let bestD = 1e9;
-      for (const e of g.enemies) {
-        const d = Math.hypot(e.x - g.keeper.x, e.y - g.keeper.y);
-        if (d < bestD) { bestD = d; best = e; }
-      }
-      if (best) { aim.mouse.x = best.x; aim.mouse.y = best.y; }
-      if (g.enemies.some((e) => e.kind === 'matriarch')) break;
-      updateGame(g, 1 / 60, aim);
-    }
-    // Ten seconds on the boss: the Keeper hunts the small fry near her
-    // (kills and combo for the frame) while the towers hammer her — the
-    // boss bar stays up because she is far from dead. Toll the bell once
-    // so the frozen march shows in the frame, and hold the Lantern Sweep
-    // (v6) so the cone of light shows over the march too.
-    if (g.screen === 'wave') {
-      const bossAim = {
-        ...IDLE_INPUT,
-        mouse: { x: 640, y: 360, down: true, clicked: false, rightClicked: false, rightDown: true },
-      };
-      for (let i = 0; i < 60 * 12 && g.screen === 'wave'; i += 1) {
-        let target = null;
-        let bestD = 1e9;
-        for (const e of g.enemies) {
-          if (e.kind === 'matriarch') continue;
-          const d = Math.hypot(e.x - g.keeper.x, e.y - g.keeper.y);
-          if (d < bestD) { bestD = d; target = e; }
-        }
-        if (!target) target = g.enemies.find((e) => e.kind === 'matriarch');
-        if (target) { bossAim.mouse.x = target.x; bossAim.mouse.y = target.y; }
-        bossAim.action = (n) => i === 0 && n === 'bell' && g.keeper.bellCooldown <= 0;
-        updateGame(g, 1 / 60, bossAim);
-      }
-      // Ember wards (v7): lay one across the east road, where the march
-      // is thickest, so the frame shows the line of light burning the
-      // road — drawn through the real code path, with real shards, and
-      // lying in the moon's band (wave 16's moon stands over the east).
-      if (g.shards >= 30) {
-        beginWard(g, 780, 360);
-        for (let x = 800; x <= 1060; x += 20) extendWard(g, x, 360);
-        endWard(g);
-      }
-      // The frame must show the sweep: the twelve seconds of holding it
-      // may have run the oil dry, so refill the lantern and hold the
-      // cone open for the capture — a real state (full oil, sweeping),
-      // staged the way the boss-first spawn order is staged.
-      g.keeper.oil = g.keeper.oilMax;
-      g.keeper.oilLocked = false;
-      g.keeper.sweeping = true;
-      // Ember Surge (v8): fan the piercing bolts across the boss's road,
-      // so the frame shows the Keeper's own art in flight.
-      castArt(g, 'surge');
-    }
-    return { screen: 'wave' };
+    return { screen: 'night' };
   }
   if (name === 'victory') {
-    startGame(g, 'Keeper');
-    buildDefence(g);
-    g.wave = 16;
-    // A real night's numbers: seed 1's v8 self-test victory, so the staged
-    // end screen shows what a won game actually scores. The kill ledger
-    // is the real distribution (sums to 957); built/upgraded/bells/wards/
-    // arts are what the self-test actually posted — 29 towers built, 38
-    // upgrades, 67 bells tolled, 16 ember wards drawn, 59 ember arts cast
-    // (20 novas, 38 surges, 1 kindle), one ward a wave.
-    g.score = 40232;
-    g.kills = 957;
-    g.warmth = 100;
-    g.stats.killsByKind = { wraith: 346, wolf: 268, mite: 172, wisp: 68, golem: 83, bulwark: 17, alpha: 1, matron: 1, matriarch: 1 };
-    g.stats.bestCombo = 88;
-    g.stats.built = 29;
-    g.stats.upgraded = 38;
-    g.stats.bells = 67;
-    g.stats.wardsDrawn = 16;
-    // The Keeper's Ember Arts (v8): the real seed-1 split — twenty novas,
-    // thirty-eight surges, one kindle.
-    g.stats.artsCast = { nova: 20, surge: 38, kindle: 1 };
-    g.stats.shardsEarned = 9946;
-    // Fifteen waves held means fifteen dawn blessings taken — a real
-    // night's ledger, grouped by the end screen into kinds and counts.
-    g.boon.held = ['frostbiteRounds', 'kindling', 'kindling', 'deepPockets', 'lanternOil', 'kindling', 'lanternOil', 'longFuse', 'swiftHands', 'swiftHands', 'ironWalls', 'ironWalls', 'kindling', 'deepPockets', 'frostbiteRounds'];
-    g.stats.boonsTaken = 15;
-    g.feed = ['Cannon shattered a Matriarch', 'Ward warded a Bulwark', 'Keeper slew a Wisp'];
-    g.message = '';
-    g.screen = 'victory';
-    return { screen: 'victory' };
+    // A real win: play all ten nights with the scripted keeper, then
+    // paint the victory screen the game actually reached — the ledger
+    // on it is the night that was really won.
+    const result = runSelfTest(g);
+    if (result.ok && g.screen === 'victory') return { screen: 'victory' };
+    // The self-test did not win: paint the defeat it reached instead,
+    // so the shot never lies about what happened.
+    return { screen: g.screen };
   }
   if (name === 'defeat') {
-    startGame(g, 'Keeper');
-    buildDefence(g);
-    g.wave = 12;
-    // A staged loss: the ledger is kept consistent with the staged
-    // numbers — 210 slain, the kinds a wave-12 loss would have met.
-    g.score = 3120;
-    g.kills = 210;
-    g.warmth = 0;
-    g.stats.killsByKind = { wraith: 78, wolf: 62, mite: 40, wisp: 18, golem: 11, alpha: 1 };
-    g.stats.bestCombo = 6;
-    g.stats.built = 12;
-    g.stats.upgraded = 2;
-    g.stats.bells = 3;
-    g.stats.shardsEarned = 2140;
-    g.message = '';
-    g.screen = 'defeat';
-    return { screen: 'defeat' };
+    startGame(g);
+    layMirrors(g);
+    startNight(g);
+    // A staged loss: the hearth is nearly out, and the keeper does not
+    // fight back — the march walks in unopposed and the first creature
+    // to reach the hearth ends the night. Played for real until the
+    // warmth runs out.
+    g.hearthHp = 5;
+    const input = createScriptedInput();
+    input.mouse.x = 640;
+    input.mouse.y = 200;
+    input.mouse.down = false;
+    for (let i = 0; i < 60 * 60 && g.screen === 'night'; i += 1) {
+      updateGame(g, 1 / 60, input);
+      input.endFrame();
+    }
+    return { screen: g.screen };
   }
   return { screen: 'title' };
 }

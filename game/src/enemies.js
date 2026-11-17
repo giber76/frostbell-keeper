@@ -1,131 +1,94 @@
-// Frost creatures: what marches, how it moves, what it does when it reaches
-// a wall or the hearth. Each creature walks its road toward the hearth; a
-// snow wall on that road makes it stop and chew the wall instead.
+// The frost: what marches on the hearth, and how it moves. Enemies walk
+// toward the hearth in a straight line and slide around frost pillars when
+// one blocks them. Wisps wobble, wolves zigzag, golems shrug off a wide
+// beam (only a focused beam bites them), and the Matriarch stops at range
+// and hurls frost bolts at the hearth.
 
-import { ENEMIES, enemyHp, WAVES, TOTAL_WAVES } from './config.js';
-import { isBossKind, bossEnrageFactor } from './bosses.js';
-import { laneLength, lanePoint, wallOnLane } from './world.js';
+import { ENEMY_KINDS, HEARTH, PILLARS, VIEW_W } from './config.js';
 
 let nextId = 1;
 
-export function makeEnemy(kind, lane, wave, random) {
-  const def = ENEMIES[kind];
-  const total = laneLength(lane);
+export function spawnEnemy(kind, x, y, hpMult) {
+  const base = ENEMY_KINDS[kind];
   return {
-    id: nextId += 1,
-    kind, lane, wave,
-    def,
-    hp: enemyHp(kind, wave),
-    maxHp: enemyHp(kind, wave),
-    speed: def.speed * random.range(0.92, 1.08),
-    dist: -random.range(0, 30),
-    total,
-    wobble: random.range(-14, 14),
-    wobblePhase: random.range(0, Math.PI * 2),
-    slowUntil: 0,
-    slowFactor: 1,
-    frozenUntil: 0,
-    burnUntil: 0,
-    burnDps: 0,
+    id: nextId,
+    kind,
+    x, y,
+    hp: Math.round(base.hp * hpMult),
+    maxHp: Math.round(base.hp * hpMult),
+    speed: base.speed,
+    radius: base.radius,
+    damage: base.damage,
+    embers: base.embers,
+    score: base.score,
+    armored: !!base.armored,
+    boss: !!base.boss,
+    wobble: Math.random() * Math.PI * 2,
+    age: 0,
     flash: 0,
-    lastHitBy: '',
-    enraged: false,
-    chewing: false,
-    dead: false,
-    leaked: false,
-    x: 0, y: 0,
+    boltTimer: 3,
   };
 }
+nextId = 1;
 
-// The spawn list for a wave, shuffled so the roads are not predictable.
-// The endless afterglow (v8): past wave 16 the night does not end.
-// Each endless wave grows from the Matriarch's own wave — more of
-// every kind, a Matron every third endless wave, the Matriarch
-// herself every fifth — and the spawn quickens, so the afterglow
-// is a test of endurance, not a victory lap.
-export function spawnSpecForWave(wave) {
-  if (wave <= TOTAL_WAVES) return WAVES[wave - 1];
-  const n = wave - TOTAL_WAVES;
-  const base = WAVES[TOTAL_WAVES - 1];
-  return {
-    wraith: base.wraith + 2 * n,
-    wolf: base.wolf + 2 * n,
-    mite: base.mite + n,
-    wisp: base.wisp + n,
-    golem: base.golem + n,
-    bulwark: 2,
-    alpha: 0,
-    matron: n % 3 === 0 ? 1 : 0,
-    matriarch: n % 5 === 0 ? 1 : 0,
-    interval: Math.max(0.5, 0.6 - 0.02 * n),
-  };
+export function spawnPoint(rng, side) {
+  if (side === 'top') return { x: rng.range(60, VIEW_W - 60), y: -20 };
+  if (side === 'left') return { x: -20, y: rng.range(60, 420) };
+  return { x: VIEW_W + 20, y: rng.range(60, 420) };
 }
 
-export function waveSpawnList(wave, random) {
-  const spec = spawnSpecForWave(wave);
-  const lanes = ['N', 'E', 'S', 'W'];
-  const list = [];
-  for (const kind of ['wraith', 'wolf', 'mite', 'wisp', 'golem', 'bulwark', 'alpha', 'matron', 'matriarch']) {
-    for (let i = 0; i < (spec[kind] || 0); i += 1) {
-      list.push({ kind, lane: lanes[(i + (kind === 'matriarch' || kind === 'matron' ? 1 : 0)) % 4] });
-    }
-  }
-  // Shuffle, but keep the bosses last so each boss arrives at the end —
-  // the Matron after the wave-10 march, the Matriarch after the last one.
-  const bosses = list.filter((s) => isBossKind(s.kind));
-  const rest = list.filter((s) => !isBossKind(s.kind));
-  for (let i = rest.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(random.next() * (i + 1));
-    [rest[i], rest[j]] = [rest[j], rest[i]];
-  }
-  return [...rest, ...bosses];
+function blockedByPillar(x, y, radius) {
+  return PILLARS.some((p) => Math.hypot(x - p.x, y - p.y) < p.r + radius + 2);
 }
 
-export function updateEnemy(e, dt, now, world) {
-  if (e.dead || e.leaked) return;
+export function moveEnemy(e, dt) {
+  e.age += dt;
   if (e.flash > 0) e.flash -= dt;
-  // Burning: the brazier's fire keeps eating the creature after the hit.
-  if (e.burnUntil > now && e.burnDps > 0) {
-    e.hp -= e.burnDps * dt;
-    if (e.hp <= 0) { e.dead = true; return; }
+  const dx = HEARTH.x - e.x;
+  const dy = HEARTH.y - e.y;
+  const dist = Math.hypot(dx, dy) || 1;
+  // The Matriarch holds at range and throws frost instead of walking in.
+  if (e.boss && dist < 190) return 'holding';
+  let vx = (dx / dist) * e.speed;
+  let vy = (dy / dist) * e.speed;
+  if (e.kind === 'wisp') {
+    const w = Math.sin(e.age * 3 + e.wobble) * 26;
+    vx += (-dy / dist) * w;
+    vy += (dx / dist) * w;
+  } else if (e.kind === 'wolf') {
+    const z = Math.sin(e.age * 5 + e.wobble) > 0 ? 1 : -1;
+    vx += (-dy / dist) * 30 * z;
+    vy += (dx / dist) * 30 * z;
   }
-  if (e.frozenUntil > now) {
-    const p = lanePoint(e.lane, Math.max(0, e.dist), e.wobble);
-    e.x = p.x; e.y = p.y;
-    return;
-  }
-  let speed = e.speed;
-  if (e.slowUntil > now) speed *= e.slowFactor;
-  // A boss's second phase: below half health she runs faster and burns
-  // brighter — the march's last push before dawn.
-  if (isBossKind(e.kind) && e.hp <= e.maxHp / 2) {
-    e.enraged = true;
-    speed *= bossEnrageFactor(e.kind);
-  }
-  // A snow wall on this road: stop at it and chew. Wisps fly over walls —
-  // no barricade holds them, so the Keeper's towers must do the work.
-  const wall = e.kind === 'wisp' ? null : wallOnLane(world, e.lane);
-  if (wall && wall.tower) {
-    const stopAt = wall.dist - e.def.radius - 16;
-    if (e.dist >= stopAt) {
-      e.dist = stopAt;
-      e.chewing = true;
-      wall.tower.hp -= 26 * dt;
-      if (wall.tower.hp <= 0) {
-        wall.tower = null;
-        e.chewing = false;
-      }
-      const p = lanePoint(e.lane, Math.max(0, e.dist), e.wobble);
-      e.x = p.x; e.y = p.y;
-      return;
+  const nx = e.x + vx * dt;
+  const ny = e.y + vy * dt;
+  if (!blockedByPillar(nx, ny, e.radius)) {
+    e.x = nx; e.y = ny;
+  } else {
+    // The direct road is blocked by a pillar: slide around it. The
+    // perpendicular direction that brings the march closer to the hearth
+    // goes first, the other way second — so a creature caught dead
+    // centre behind a pillar walks around it instead of stalling there
+    // forever, out of the beam's reach and out of the hearth's.
+    const px = -dy / dist;
+    const py = dx / dist;
+    const s1x = e.x + px * e.speed * dt;
+    const s1y = e.y + py * e.speed * dt;
+    const s2x = e.x - px * e.speed * dt;
+    const s2y = e.y - py * e.speed * dt;
+    const d1 = Math.hypot(HEARTH.x - s1x, HEARTH.y - s1y);
+    const d2 = Math.hypot(HEARTH.x - s2x, HEARTH.y - s2y);
+    const first = d1 <= d2 ? [s1x, s1y] : [s2x, s2y];
+    const second = d1 <= d2 ? [s2x, s2y] : [s1x, s1y];
+    if (!blockedByPillar(first[0], first[1], e.radius)) {
+      e.x = first[0]; e.y = first[1];
+    } else if (!blockedByPillar(second[0], second[1], e.radius)) {
+      e.x = second[0]; e.y = second[1];
     }
   }
-  e.chewing = false;
-  e.dist += speed * dt;
-  const wob = Math.sin(now * 1.3 + e.wobblePhase) * 6;
-  const p = lanePoint(e.lane, Math.max(0, e.dist), e.wobble + wob);
-  e.x = p.x; e.y = p.y;
-  if (e.dist >= e.total) {
-    e.leaked = true;
-  }
+  return 'walking';
+}
+
+export function enemyAtHearth(e) {
+  return Math.hypot(e.x - HEARTH.x, e.y - HEARTH.y) < HEARTH.r + e.radius - 6;
 }

@@ -1,75 +1,133 @@
-// Keyboard and mouse, read fresh every frame. The game polls this, it never
-// listens for game events itself, so a headless self-test can drive the same
-// code by writing into the same fields.
+// Input: mouse position and buttons plus the keyboard, normalised to the
+// game's logical 1280x720 coordinates. The canvas is supersampled (painted
+// at 2x), so the mouse is mapped back to logical pixels here and nowhere
+// else.
+//
+// The game talks to input through a small action API:
+//   down(name)     — is the key held? (' ' means Space, 'q' means Q)
+//   wasPressed(name) — was it pressed this frame? (same names)
+//   action(name)   — 'confirm' (Enter/Space), 'pause' (Escape),
+//                    'restart' (R), 'mute' (M)
+//   mouse          — {x, y, down, clicked, rightClicked}
+//   wheel          — -1, 0 or 1, consumed on read
 
 import { VIEW_W, VIEW_H } from './config.js';
 
 export const ACTION_CONFIRM = 'confirm';
-export const ACTION_PAUSE = 'pause';
-export const ACTION_BELL = 'bell';
-export const ACTION_MUTE = 'mute';
-export const ACTION_UPGRADE = 'upgrade';
-export const ACTION_RESTART = 'restart';
+
+// Translate the game's short key names to event.code values.
+function codeFor(name) {
+  if (name === ' ') return 'Space';
+  if (name.length === 1) {
+    const ch = name.toLowerCase();
+    if (ch >= 'a' && ch <= 'z') return 'Key' + ch.toUpperCase();
+    if (ch >= '0' && ch <= '9') return 'Digit' + ch;
+  }
+  return name;
+}
+
+function actionPressed(pressed, name) {
+  if (name === 'confirm') return pressed.has('Enter') || pressed.has('Space');
+  if (name === 'pause') return pressed.has('Escape');
+  if (name === 'restart') return pressed.has('KeyR');
+  if (name === 'mute') return pressed.has('KeyM');
+  return false;
+}
 
 export function createInput(canvas) {
+  const mouse = { x: VIEW_W / 2, y: 300, down: false, clicked: false, rightClicked: false };
   const keys = new Set();
   const pressed = new Set();
-  const mouse = { x: 0, y: 0, down: false, clicked: false, rightClicked: false, rightDown: false };
+  let wheelDelta = 0;
 
-  function toLocal(e) {
-    // Map to logical 1280x720 coordinates, not the canvas's 2x backing
-    // store: the renderer supersamples, the game never sees the extra pixels.
+  function toLogical(event) {
     const rect = canvas.getBoundingClientRect();
-    const sx = VIEW_W / rect.width;
-    const sy = VIEW_H / rect.height;
-    return { x: (e.clientX - rect.left) * sx, y: (e.clientY - rect.top) * sy };
+    return {
+      x: ((event.clientX - rect.left) / rect.width) * VIEW_W,
+      y: ((event.clientY - rect.top) / rect.height) * VIEW_H,
+    };
   }
 
-  function keyName(e) {
-    const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
-    return k;
-  }
+  canvas.addEventListener('mousemove', (event) => {
+    const p = toLogical(event);
+    mouse.x = p.x;
+    mouse.y = p.y;
+  });
+  canvas.addEventListener('mousedown', (event) => {
+    const p = toLogical(event);
+    mouse.x = p.x;
+    mouse.y = p.y;
+    if (event.button === 0) {
+      mouse.down = true;
+      mouse.clicked = true;
+    }
+    if (event.button === 2) mouse.rightClicked = true;
+    event.preventDefault();
+  });
+  canvas.addEventListener('mouseup', (event) => {
+    if (event.button === 0) mouse.down = false;
+  });
+  canvas.addEventListener('contextmenu', (event) => event.preventDefault());
+  canvas.addEventListener('wheel', (event) => {
+    wheelDelta += event.deltaY;
+    event.preventDefault();
+  }, { passive: false });
 
-  window.addEventListener('keydown', (e) => {
-    const k = keyName(e);
-    if ([' ', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(k)) e.preventDefault();
-    if (!keys.has(k)) pressed.add(k);
-    keys.add(k);
+  window.addEventListener('keydown', (event) => {
+    if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.code)) {
+      event.preventDefault();
+    }
+    if (!event.repeat) pressed.add(event.code);
+    keys.add(event.code);
   });
-  window.addEventListener('keyup', (e) => { keys.delete(keyName(e)); });
-  window.addEventListener('blur', () => { keys.clear(); pressed.clear(); mouse.down = false; mouse.rightDown = false; });
-  canvas.addEventListener('mousemove', (e) => {
-    const p = toLocal(e);
-    mouse.x = p.x; mouse.y = p.y;
-  });
-  canvas.addEventListener('mousedown', (e) => {
-    const p = toLocal(e);
-    mouse.x = p.x; mouse.y = p.y;
-    if (e.button === 0) { mouse.down = true; mouse.clicked = true; }
-    // Right button held is the Lantern Sweep (v6): rightDown stays true
-    // until the button comes up, so the Keeper can sweep the march.
-    if (e.button === 2) { mouse.rightClicked = true; mouse.rightDown = true; }
-  });
-  window.addEventListener('mouseup', (e) => {
-    if (e.button === 0) mouse.down = false;
-    if (e.button === 2) mouse.rightDown = false;
-  });
-  canvas.addEventListener('contextmenu', (e) => { e.preventDefault(); });
+  window.addEventListener('keyup', (event) => keys.delete(event.code));
+  window.addEventListener('blur', () => keys.clear());
 
   return {
-    keys, pressed, mouse,
-    down(...names) { return names.some((n) => keys.has(n)); },
-    wasPressed(...names) { return names.some((n) => pressed.has(n)); },
-    // One-shot presses are consumed at the end of each frame.
-    endFrame() { pressed.clear(); mouse.clicked = false; mouse.rightClicked = false; },
-    action(name) {
-      if (name === ACTION_CONFIRM) return this.wasPressed('enter');
-      if (name === ACTION_PAUSE) return this.wasPressed('escape', 'p');
-      if (name === ACTION_BELL) return this.wasPressed(' ');
-      if (name === ACTION_MUTE) return this.wasPressed('m');
-      if (name === ACTION_UPGRADE) return this.wasPressed('u');
-      if (name === ACTION_RESTART) return this.wasPressed('r', 'enter');
-      return false;
+    mouse,
+    keys,
+    // The wheel reads -1/0/1 and consumes the delta, so one notch turns
+    // a mirror one step and a held wheel does not keep spinning it.
+    get wheel() {
+      const d = wheelDelta;
+      wheelDelta = 0;
+      return d > 0 ? 1 : d < 0 ? -1 : 0;
+    },
+    down(name) { return keys.has(codeFor(name)); },
+    wasPressed(name) { return pressed.has(codeFor(name)); },
+    action(name) { return actionPressed(pressed, name); },
+    confirm() { return pressed.has('Enter') || pressed.has('Space'); },
+    endFrame() {
+      mouse.clicked = false;
+      mouse.rightClicked = false;
+      pressed.clear();
+    },
+  };
+}
+
+// A scripted stand-in for the real input, used by the self-test and the
+// screenshot staging: the same game code reads it, so a staged scene is a
+// real play, not a painting.
+export function createScriptedInput() {
+  const mouse = { x: VIEW_W / 2, y: 300, down: false, clicked: false, rightClicked: false };
+  const keys = new Set();
+  const pressed = new Set();
+  let wheel = 0;
+  return {
+    mouse,
+    keys,
+    get wheel() { const d = wheel; wheel = 0; return d; },
+    setWheel(v) { wheel = v; },
+    press(name) { const c = codeFor(name); pressed.add(c); keys.add(c); },
+    release(name) { keys.delete(codeFor(name)); },
+    down(name) { return keys.has(codeFor(name)); },
+    wasPressed(name) { return pressed.has(codeFor(name)); },
+    action(name) { return actionPressed(pressed, name); },
+    confirm() { return pressed.has('Enter') || pressed.has('Space'); },
+    endFrame() {
+      mouse.clicked = false;
+      mouse.rightClicked = false;
+      pressed.clear();
     },
   };
 }

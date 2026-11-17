@@ -1,598 +1,441 @@
-// The game itself: the state machine (title → build → wave → … → victory or
-// defeat), the economy, the spawning, the bolts, and the scoring. The
-// renderer only paints this state; nothing here draws.
+// FROSTBELL v9 — the game itself. The keeper no longer stands back and
+// lets towers do the work: the hearth's light is a beam the player aims
+// with the mouse, sweeps across the field, focuses with SPACE, and bounces
+// off ice mirrors the player places and turns. Everything else — the ten
+// nights, the frost march, the dawn gifts, the win and lose — hangs off
+// that one verb: steer the light.
+//
+// The renderer only paints this state; nothing here draws.
 
 import {
-  BUILD_SECONDS, EARLY_START_BONUS, HEARTH_MAX_WARMTH, START_SHARDS,
-  TOTAL_WAVES, TOWER_KEYS, TOWERS, WAVE_CLEAR_BONUS, KEEPER, WAVES,
-  BOONS,
+  BEAM, ECONOMY, ENEMY_KINDS, HEARTH, HEARTH_MAX_HP, MIRROR, NIGHTS,
+  VIEW_W, VIEW_H,
 } from './config.js';
-import { moonForWave, setMoon, applyMoon, moonKeeperMult } from './moon.js';
-import { beginWard, extendWard, endWard, applyWards, wardCost, wardLength } from './wards.js';
-import { createRandom } from './random.js';
-import { createWorld, pickSlot, pickTowerAt } from './world.js';
-import { makeEnemy, waveSpawnList, spawnSpecForWave, updateEnemy } from './enemies.js';
-import { castAbility, tickArts } from './abilities.js';
-import { makeTower, updateTower, upgradeCost, canUpgrade, setWind, setBoonFactors } from './towers.js';
-import { makeKeeper, updateKeeper, tollBell } from './keeper.js';
-import { makeParticles, spawnSnow, updateParticles, burst, floater } from './particles.js';
-import { createVillage, updateVillage } from './village.js';
-import { windForWave } from './wind.js';
-import { nightForWave, nightEndsAt, NIGHT_BONUS_SHARDS } from './nights.js';
-import { createAnimals, updateAnimals } from './animals.js';
-import { createMelody } from './music.js';
-import { offerBoons, pickBoon, boonCardAt, boonSummary, rerollBoons, rerollButtonAt } from './boons.js';
-import { applySweep } from './sweep.js';
+import { makeRng } from './random.js';
+import {
+  createMirrorSet, canPlace, placeMirror, mirrorAt, rotateSelected,
+  removeSelected, selectedMirror,
+} from './mirrors.js';
+import { castBeam, distToSegment, pointInBeam } from './beam.js';
+import {
+  spawnEnemy, spawnPoint, moveEnemy, enemyAtHearth,
+} from './enemies.js';
+import {
+  nightComposition, nightInterval, nightHpMult, offerUpgrades,
+  NIGHT_NAMES, UPGRADES,
+} from './nights.js';
+import {
+  makeParticles, seedSnow, spawnEmber, burst, floater, updateParticles,
+} from './particles.js';
+
+// Local numbers the config does not own: the focus meter, the build
+// clock, the early-start bonus, the glimmer shard's value.
+const FOCUS_MAX = 100;
+const FOCUS_LOCK = 40;
+const BUILD_SECONDS = 25;
+const EARLY_START_BONUS = 15;
+const SHARD_VALUE = 6;
+const SPAWN_SIDES = ['top', 'left', 'right'];
 
 export const SCREEN_TITLE = 'title';
 export const SCREEN_BUILD = 'build';
-export const SCREEN_WAVE = 'wave';
+export const SCREEN_NIGHT = 'night';
 export const SCREEN_VICTORY = 'victory';
 export const SCREEN_DEFEAT = 'defeat';
 export const SCREEN_PAUSED = 'paused';
 
+// One fresh game. The seed only drives the nights' spawns and the gift
+// offers — the snow and embers use Math.random, so they never touch the
+// night's determinism.
 export function createGame(seed, audio) {
-  const random = createRandom(seed);
-  const world = createWorld(random);
-  const village = createVillage();
-  const animals = createAnimals();
-  const melody = createMelody(audio);
-  const particles = makeParticles(random);
-  spawnSnow(particles, 160);
+  const rng = makeRng(seed);
+  const particles = makeParticles();
+  seedSnow(particles, 150);
   return {
-    seed, random, world, village, animals, melody, particles, audio,
+    seed, rng, particles, audio,
     screen: SCREEN_TITLE,
     prevScreen: SCREEN_BUILD,
-    // The endless afterglow (v8): after the victory, the night can go
-    // on — waves without end, the hearth still burning.
-    endless: false,
-    // Kindle (v8): the hearth flares until this time, and the towers
-    // quicken while it holds. Nova's ring (v8): an expanding circle of
-    // ice, drawn while it lasts.
-    kindleUntil: 0, nova: null,
     now: 0,
-    wave: 0,
-    wind: windForWave(1),
+    night: 0,
     score: 0,
     best: 0,
-    shards: START_SHARDS,
-    warmth: HEARTH_MAX_WARMTH,
-    kills: 0,
-    combo: 0,
-    comboUntil: 0,
-    feed: [],
-    leakedTotal: 0,
+    embers: ECONOMY.startEmbers,
+    hearthHp: HEARTH_MAX_HP,
+    // The focus meter: holding SPACE drains it, releasing refills it.
+    // Run it dry and it locks until it recovers to 40.
+    focus: FOCUS_MAX,
+    focusLocked: false,
+    mirrors: createMirrorSet(),
+    maxMirrors: MIRROR.startCount,
+    damageMult: 1,
+    focusDrainMult: 1,
+    prismMult: 1,
+    sweepDamageMult: 1,
+    sweepWidthMult: 1,
     enemies: [],
     bolts: [],
+    shards: [],
     spawnQueue: [],
     spawnTimer: 0,
+    shardTimer: 6,
+    spawnSide: 0,
     buildTimer: BUILD_SECONDS,
-    selectedKind: 'brazier',
-    selectedPlot: null,
+    upgradeOffer: null,
+    upgradePicked: false,
+    beam: null,
+    beamAngle: -Math.PI / 2,
+    focusing: false,
+    kills: 0,
+    killsByKind: {},
+    combo: 0,
+    comboUntil: 0,
+    bestCombo: 0,
+    feed: [],
     message: '',
     messageUntil: 0,
-    // Dawn Boons (v6): blessings the Keeper has taken, and the offer open
-    // right now. Multipliers start at 1 and grow as boons are taken.
-    boon: {
-      held: [], taken: 0,
-      boltMult: 1, bellBonus: 0, brazierMult: 1, cannonMult: 1,
-      rateMult: 1, wallBonus: 0, rerolled: false,
-    },
-    boonOffer: null,
-    boonPicked: false,
-    // The moon (v7): where it hangs this wave, and the band of light
-    // under it. Ember wards (v7): the lines the Keeper has laid, and
-    // the drag in progress.
-    moon: moonForWave(1),
-    wards: [],
-    ward: { tool: false, drawing: false, points: [] },
     stats: {
-      boltsFired: 0, bells: 0, built: 0, upgraded: 0,
-      killsByKind: {}, bestCombo: 0, shardsEarned: 0, boonsTaken: 0,
-      wardsDrawn: 0,
-      // The Keeper's Ember Arts (v8): how many times each art went off.
-      artsCast: { nova: 0, surge: 0, kindle: 0 },
+      mirrorsPlaced: 0,
+      mirrorsRemoved: 0,
+      focusSeconds: 0,
+      shardsCollected: 0,
+      giftsTaken: 0,
+      nightsCleared: 0,
     },
-    difficulty: 'Keeper',
     muted: false,
   };
 }
 
-export function startGame(g, difficulty) {
-  g.difficulty = difficulty || 'Keeper';
-  // Stop the old melody before the fresh game brings its own, or two
-  // music-boxes would play over each other on every replay.
-  if (g.melody) g.melody.stop();
-  const fresh = createGame(g.seed, g.audio);
-  fresh.best = g.best;
-  fresh.difficulty = g.difficulty;
-  Object.keys(fresh).forEach((k) => { g[k] = fresh[k]; });
-  // A fresh night starts with no blessings: the towers module keeps its
-  // factors between games on one page, so reset them here, or a second
-  // play would inherit the first night's boons.
-  syncBoonFactors(g);
-  // The moon module keeps its band the same way: a fresh night starts
-  // under the first wave's moon.
-  setMoon(g.moon);
-  g.screen = SCREEN_BUILD;
-  g.wave = 0;
-  g.buildTimer = BUILD_SECONDS;
-  g.melody.start();
-  say(g, 'Build your defences — press ENTER when ready', 6);
-}
-
-// Push the Keeper's blessings into the towers module, so a tower's damage
-// and rate are the blessings' as well as its own. Called on a fresh game
-// and every time a boon is taken.
-export function syncBoonFactors(g) {
-  setBoonFactors({
-    brazier: g.boon.brazierMult,
-    cannon: g.boon.cannonMult,
-    rate: g.boon.rateMult,
-  });
-}
-
-// Take one of the offered dawn boons: apply it, count it, close the offer.
-export function takeBoon(g, index) {
-  if (!g.boonOffer || g.boonPicked) return false;
-  const id = g.boonOffer[index];
-  if (!id) return false;
-  if (!pickBoon(g, id)) return false;
-  syncBoonFactors(g);
-  g.boonPicked = true;
-  g.stats.boonsTaken += 1;
-  g.boonOffer = null;
-  const boon = BOONS[id];
-  say(g, `Dawn blessing taken: ${boon.name} — ${boon.blurb}`, 4);
-  g.audio.build();
-  return true;
-}
-
-// Turn the dawn's offer (v6): redraw the three cards for 15 shards,
-// once per dawn. A turn that cannot happen says why, and the click that
-// asked for it is spent either way — the panel, not the plot behind it,
-// owns that click.
-export function rerollOffer(g) {
-  if (!g.boonOffer || g.boonPicked) return false;
-  const fresh = rerollBoons(g);
-  if (!fresh) {
-    say(g, g.boon.rerolled
-      ? 'The dawn has turned once already — take a blessing'
-      : 'Not enough shards to turn the dawn — 15◆', 2.5);
-    return false;
-  }
-  g.boonOffer = fresh;
-  say(g, 'The dawn turns — three new blessings, 15◆', 3);
-  g.audio.build();
-  return true;
-}
-
 function say(g, text, seconds) {
   g.message = text;
-  g.messageUntil = g.now + (seconds || 3);
+  g.messageUntil = g.now + (seconds ?? 3);
 }
 
-export function startWave(g) {
-  // The endless afterglow (v8): past wave 16 the waves keep coming —
-  // the guard that ends the night at sixteen does not apply there.
-  if (g.wave >= TOTAL_WAVES && !g.endless) return;
-  g.wave += 1;
-  g.combo = 0;
-  // The dawn's offer closes when the wave starts: a blessing not taken
-  // by then is gone with the night that offered it.
-  g.boonOffer = null;
-  g.boonPicked = false;
-  // The wind turns: this wave's wind is set on the game and on the
-  // towers, so every shot, every march and every reward feels it.
-  g.wind = windForWave(g.wave);
-  setWind(g.wind);
-  // The moon turns (v7): this wave's moon is set on the game and on
-  // the towers, so the band of light moves with the night.
-  g.moon = moonForWave(g.wave);
-  setMoon(g.moon);
-  g.spawnQueue = waveSpawnList(g.wave, g.random);
-  g.spawnTimer = 0.5;
-  g.screen = SCREEN_WAVE;
-  g.audio.horn();
-  say(g, g.endless
-    ? `Endless wave ${g.wave - TOTAL_WAVES} — the night does not end: ${g.wind.name}: ${g.wind.blurb}`
-    : `Wave ${g.wave} of ${TOTAL_WAVES} — ${g.wind.name}: ${g.wind.blurb}`, 4);
+export function startGame(g) {
+  const fresh = createGame(g.seed, g.audio);
+  fresh.best = g.best;
+  for (const k of Object.keys(fresh)) g[k] = fresh[k];
+  g.screen = SCREEN_BUILD;
+  g.night = 0;
+  g.buildTimer = BUILD_SECONDS;
+  g.upgradeOffer = offerUpgrades(g.rng, 3);
+  g.upgradePicked = false;
+  say(g, 'Place ice mirrors with a click — then press ENTER when the night is ready', 6);
 }
 
-function endWave(g) {
-  const bonus = WAVE_CLEAR_BONUS + g.wave * 10;
+// Take one of the three dawn gifts offered between nights. Each gift
+// knows how to apply itself (nights.js) — the game only counts it.
+export function takeUpgrade(g, index) {
+  if (!g.upgradeOffer || g.upgradePicked) return false;
+  const up = g.upgradeOffer[index];
+  if (!up) return false;
+  up.apply(g);
+  g.upgradePicked = true;
+  g.stats.giftsTaken += 1;
+  g.upgradeOffer = null;
+  say(g, `Dawn gift taken: ${up.name} — ${up.blurb}`, 4);
+  g.audio.pickUpgrade();
+  return true;
+}
+
+export function startNight(g) {
+  if (g.night >= NIGHTS) return;
+  g.night += 1;
+  g.spawnQueue = nightComposition(g.night, g.rng);
+  g.spawnTimer = 0.8;
+  g.shardTimer = 6;
+  g.spawnSide = 0;
+  g.screen = SCREEN_NIGHT;
+  g.audio.nightStart();
+  say(g, `${NIGHT_NAMES[g.night - 1]}`, 4);
+}
+
+function endNight(g) {
+  const bonus = ECONOMY.nightBonus + g.night * 10;
   g.score += bonus;
-  g.shards += 12;
-  g.stats.shardsEarned += 12;
-  g.combo = 0;
-  g.audio.waveClear();
-  // The endless afterglow (v8): the sixteenth wave ends the night only
-  // when the Keeper has not chosen the afterglow — an endless wave
-  // clears like any other, into a dawn offer and a build phase.
-  if (g.wave >= TOTAL_WAVES && !g.endless) {
-    g.score += g.warmth * 5;
+  g.embers += 12;
+  g.stats.nightsCleared += 1;
+  g.audio.nightClear();
+  if (g.night >= NIGHTS) {
+    g.score += g.hearthHp * 5;
     g.screen = SCREEN_VICTORY;
-    g.audio.win();
+    g.audio.victory();
     return;
   }
-  // Dawn breaks briefly between nights: a breath, a bonus, a blessing,
-  // and the next night's name — the night is told in ten chapters, not
-  // sixteen waves. The dawn offers three blessings after every wave; the
-  // Keeper takes one before the next wave starts.
-  g.boonOffer = offerBoons(g);
-  g.boonPicked = false;
-  // A fresh dawn can be turned once — the reroll is per offer, not per night.
-  g.boon.rerolled = false;
-  if (nightEndsAt(g.wave)) {
-    const next = nightForWave(g.wave + 1);
-    g.shards += NIGHT_BONUS_SHARDS;
-    g.stats.shardsEarned += NIGHT_BONUS_SHARDS;
-    g.screen = SCREEN_BUILD;
-    g.buildTimer = BUILD_SECONDS;
-    say(g, `Wave ${g.wave} held! Dawn breaks briefly — ${next.short}, ${next.title}. +${bonus} score, +${12 + NIGHT_BONUS_SHARDS} shards`, 5);
-    return;
-  }
+  g.upgradeOffer = offerUpgrades(g.rng, 3);
+  g.upgradePicked = false;
   g.screen = SCREEN_BUILD;
   g.buildTimer = BUILD_SECONDS;
-  say(g, `Wave ${g.wave} held! +${bonus} score, +12 shards — build, then ENTER`, 4);
+  const next = NIGHT_NAMES[g.night];
+  say(g, `Night ${g.night} held! +${bonus} score, +12 embers — take a gift, place mirrors, then ENTER for ${next}`, 5);
 }
 
-// The endless afterglow (v8): from the victory screen, the Keeper can
-// keep the night going instead of playing again — the hearth, the score
-// and the towers carry over, and the waves grow past sixteen. Only
-// from a victory, and only once per night.
-export function beginEndless(g) {
-  if (g.screen !== SCREEN_VICTORY || g.endless) return false;
-  g.endless = true;
-  g.screen = SCREEN_BUILD;
-  g.buildTimer = BUILD_SECONDS;
-  g.boonOffer = offerBoons(g);
-  g.boonPicked = false;
-  g.boon.rerolled = false;
-  say(g, 'The night does not end — the endless afterglow begins. Wave 17 marches.', 5);
-  g.audio.horn();
-  return true;
+// One enemy dies to the beam. Rewards, combo, the tale, the sparks.
+function killEnemy(g, e, focused) {
+  g.kills += 1;
+  g.killsByKind[e.kind] = (g.killsByKind[e.kind] || 0) + 1;
+  g.embers += e.embers;
+  g.combo = g.now <= g.comboUntil ? g.combo + 1 : 1;
+  g.bestCombo = Math.max(g.bestCombo, g.combo);
+  g.comboUntil = g.now + 2.5;
+  const mult = 1 + Math.min(g.combo - 1, 8) * 0.25;
+  g.score += Math.round(e.score * mult);
+  if (g.combo >= 4) {
+    g.feed.push(`The light burned ${g.combo} in a row`);
+    if (g.feed.length > 3) g.feed.shift();
+  }
+  burst(g.particles, e.x, e.y, focused);
+  floater(g.particles, e.x, e.y - 14, `+${e.embers}`, '#ffd76a');
+  g.audio.kill();
+  if (e.kind === 'matriarch') {
+    g.feed.push('The Frost Matriarch is broken — dawn comes');
+    if (g.feed.length > 3) g.feed.shift();
+  }
 }
 
-// One art, cast through the game's own bolt pipe — the shots module and
-// the self-test call this the same way the keys do.
-export function castArt(g, id) {
-  return castAbility(g, id, (b) => fireBolt(g, b));
+// The beam's damage for one enemy this tick. Focused light burns hot;
+// sweep light is wide and cool; armor shrugs off the sweep but not the
+// focus; light that has already bounced off a mirror (prism) hits harder.
+// `bounce` is the segment the enemy was caught on: 0 is the direct beam.
+function beamDamageFor(g, e, bounce) {
+  let dps = g.focusing ? BEAM.focusDps : BEAM.sweepDps;
+  dps *= g.damageMult;
+  if (!g.focusing) dps *= g.sweepDamageMult;
+  if (bounce >= 1) dps *= g.prismMult;
+  if (e.armored && !g.focusing) dps *= 0.25;
+  return dps;
 }
 
-export function tryBuild(g, slot) {
-  if (!slot) return false;
-  if (slot.tower) { g.selectedPlot = slot; return true; }
-  const kind = g.selectedKind;
-  if (slot.kind === 'wall' && kind !== 'wall') {
-    say(g, 'Road slots hold Snow Walls only — press 4', 2.5);
-    g.audio.denied();
-    return false;
-  }
-  if (slot.kind === 'plot' && kind === 'wall') {
-    say(g, 'Snow Walls go on the road slots — click a road marker', 2.5);
-    g.audio.denied();
-    return false;
-  }
-  const cost = TOWERS[kind].cost;
-  if (g.shards < cost) {
-    say(g, `Not enough shards — ${TOWERS[kind].name} costs ${cost}`, 2.5);
-    g.audio.denied();
-    return false;
-  }
-  g.shards -= cost;
-  slot.tower = makeTower(kind, slot.x, slot.y);
-  // Iron Walls (v6): a blessing taken earlier in the night strengthens
-  // every wall the Keeper builds from then on, not just the standing ones.
-  if (kind === 'wall' && g.boon.wallBonus > 0) {
-    slot.tower.maxHp += g.boon.wallBonus;
-    slot.tower.hp = slot.tower.maxHp;
-  }
-  g.stats.built += 1;
-  g.audio.build();
-  burst(g.particles, slot.x, slot.y, '#ffd76a', 12, 90);
-  return true;
-}
-
-export function tryUpgrade(g) {
-  const slot = g.selectedPlot;
-  if (!slot || !slot.tower) return false;
-  const tower = slot.tower;
-  if (!canUpgrade(tower)) {
-    say(g, tower.kind === 'wall' ? 'Snow Walls cannot be upgraded' : 'Already at level 3', 2);
-    g.audio.denied();
-    return false;
-  }
-  const cost = upgradeCost(tower);
-  if (g.shards < cost) {
-    say(g, `Upgrade costs ${cost} shards`, 2);
-    g.audio.denied();
-    return false;
-  }
-  g.shards -= cost;
-  tower.level += 1;
-  if (tower.kind === 'wall') { /* walls have no levels */ }
-  tower.maxHp = Math.round((TOWERS[tower.kind].hp || 0) * (1 + 0.5 * (tower.level - 1)));
-  tower.hp = tower.maxHp;
-  g.stats.upgraded += 1;
-  g.audio.build();
-  burst(g.particles, tower.x, tower.y, '#7dffb2', 14, 110);
-  floater(g.particles, tower.x, tower.y - 24, `LEVEL ${tower.level}`, '#7dffb2');
-  return true;
-}
-
-function fireBolt(g, bolt) {
-  // The Keeper's own bolts ride the wind; tower bolts already carry it
-  // in their damage, so only the Keeper's are scaled here. A blessing
-  // taken at dawn (Ember Heart) feeds them too — and so does the moon
-  // (v7), when the Keeper stands in its band.
-  if (bolt.from === 'keeper') bolt.damage = Math.round(bolt.damage * g.wind.boltDamage * g.boon.boltMult * moonKeeperMult(g.keeper.x));
-  // A piercing surge bolt (v8) remembers what it already passed
-  // through, so it never bites the same creature twice.
-  g.bolts.push({ ...bolt, alive: true, hit: false, hitIds: bolt.pierce ? new Set() : null });
-  g.stats.boltsFired += 1;
-}
-
-function updateBolts(g, dt) {
-  for (const b of g.bolts) {
-    if (!b.alive) continue;
-    if (b.target) {
-      if (b.target.dead || b.target.leaked) { b.alive = false; continue; }
-      const ang = Math.atan2(b.target.y - b.y, b.target.x - b.x);
-      b.x += Math.cos(ang) * b.speed * dt;
-      b.y += Math.sin(ang) * b.speed * dt;
-      if (Math.hypot(b.target.x - b.x, b.target.y - b.y) < b.target.def.radius + b.radius) {
-        b.target.hp -= b.damage;
-        b.target.lastHitBy = b.from === 'cannon' ? 'Ember Cannon' : b.from === 'mortar' ? 'Mortar' : 'Keeper';
-        b.target.flash = 0.12;
-        burst(g.particles, b.target.x, b.target.y, '#ff9a3d', 6, 120);
-        if (b.target.hp <= 0) b.target.dead = true;
-        // A mortar shell bursts over the crowd: everything caught in its
-        // splash takes the same hit, and the tale names the Mortar.
-        if (b.from === 'mortar' && b.splash) {
-          burst(g.particles, b.target.x, b.target.y, '#ffd76a', 16, 180);
-          for (const e of g.enemies) {
-            if (e.dead || e.leaked || e === b.target) continue;
-            if (Math.hypot(e.x - b.target.x, e.y - b.target.y) <= b.splash) {
-              e.hp -= b.damage;
-              e.lastHitBy = 'Mortar';
-              e.flash = 0.12;
-              if (e.hp <= 0) e.dead = true;
-            }
-          }
-        }
-        b.alive = false;
-      }
-    } else {
-      b.x += Math.cos(b.angle) * b.speed * dt;
-      b.y += Math.sin(b.angle) * b.speed * dt;
-      if (b.x < 200 || b.x > 1080 || b.y < 56 || b.y > 664) { b.alive = false; continue; }
-      for (const e of g.enemies) {
-        if (e.dead || e.leaked) continue;
-        // A piercing surge bolt (v8) passes through the march: it
-        // bites each creature once and keeps flying to the board's edge.
-        if (b.pierce && b.hitIds && b.hitIds.has(e)) continue;
-        if (Math.hypot(e.x - b.x, e.y - b.y) < e.def.radius + b.radius) {
-          e.hp -= b.damage;
-          e.lastHitBy = 'Keeper';
-          e.flash = 0.12;
-          e.burnUntil = Math.max(e.burnUntil, g.now + 0.8);
-          e.burnDps = Math.max(e.burnDps, 6);
-          burst(g.particles, e.x, e.y, '#ff9a3d', 5, 100);
-          if (e.hp <= 0) e.dead = true;
-          if (b.pierce) { b.hitIds.add(e); continue; }
-          b.alive = false;
-          break;
-        }
-      }
+// Which segment of the beam touches this enemy, and on which bounce —
+// or -1 when the light misses it entirely.
+function beamBounceHit(segments, e, halfWidth) {
+  let best = -1;
+  for (const seg of segments) {
+    if (distToSegment(e.x, e.y, seg) < e.radius + halfWidth) {
+      if (best === -1 || seg.bounce < best) best = seg.bounce;
     }
   }
-  g.bolts = g.bolts.filter((b) => b.alive);
+  return best;
 }
 
-function resolveDeaths(g) {
+// The night's combat: aim, focus meter, beam damage, kills, the march,
+// the boss's bolts, the glimmer shards the beam gathers.
+function updateNight(g, dt, input) {
+  // Aim: the beam follows the mouse from the hearth, always.
+  const m = input.mouse;
+  g.beamAngle = Math.atan2(m.y - HEARTH.y, m.x - HEARTH.x);
+  const wantFocus = input.down(' ') || input.mouse.down;
+  g.focusing = false;
+  if (wantFocus && !g.focusLocked) {
+    g.focusing = true;
+    g.focus -= BEAM.focusDrain * g.focusDrainMult * dt;
+    g.stats.focusSeconds += dt;
+    if (g.focus <= 0) {
+      g.focus = 0;
+      g.focusLocked = true;
+      g.focusing = false;
+      say(g, 'The light is spent — let it breathe back to 40', 2.5);
+      g.audio.denied();
+    }
+  } else {
+    g.focus = Math.min(FOCUS_MAX, g.focus + BEAM.focusRegen * dt);
+    if (g.focusLocked && g.focus >= FOCUS_LOCK) g.focusLocked = false;
+  }
+
+  // The beam itself, cast fresh every tick from the hearth.
+  const width = (g.focusing ? BEAM.focusWidth : BEAM.sweepWidth * g.sweepWidthMult);
+  const segments = castBeam({ x: HEARTH.x, y: HEARTH.y }, g.beamAngle, g.mirrors.list);
+  g.beam = { segments, width, focusing: g.focusing };
+  g.audio.setBeam(g.focusing ? 1 : 0.3);
+
+  // Damage: every enemy the beam touches burns.
   for (const e of g.enemies) {
-    if (e.dead) {
-      g.kills += 1;
-      g.stats.killsByKind[e.kind] = (g.stats.killsByKind[e.kind] || 0) + 1;
-      // The wind pays: a gale's kills are worth more, a dawn wind more still.
-      const reward = Math.round(e.def.reward * g.wind.shardBonus);
-      g.shards += reward;
-      g.stats.shardsEarned += reward;
-      // Combo: kills within 2.5 s of each other build a multiplier, up to x3.
-      g.combo = g.now <= g.comboUntil ? g.combo + 1 : 1;
-      g.stats.bestCombo = Math.max(g.stats.bestCombo, g.combo);
-      g.comboUntil = g.now + 2.5;
-      const mult = 1 + Math.min(g.combo - 1, 8) * 0.25;
-      g.score += Math.round(e.def.score * mult);
-      // The tale: who slew what, for the HUD's feed — short names, so the
-      // line fits the panel at a glance.
-      const killerShort = { Brazier: 'Brazier', 'Ember Cannon': 'Cannon', Mortar: 'Mortar', Keeper: 'Keeper', 'Ember Ward': 'Ward' }[e.lastHitBy] || 'The hearth';
-      const preyShort = { wraith: 'Wraith', wolf: 'Wolf', mite: 'Mite', wisp: 'Wisp', golem: 'Golem', bulwark: 'Bulwark', alpha: 'Alpha', matron: 'Matron', matriarch: 'Matriarch' }[e.kind] || e.def.name;
-      const verb = killerShort === 'Brazier' ? 'scorched' : killerShort === 'Cannon' ? 'shattered' : killerShort === 'Mortar' ? 'burst' : killerShort === 'Ward' ? 'warded' : 'slew';
-      g.feed.push(`${killerShort} ${verb} a ${preyShort}`);
-      if (g.feed.length > 3) g.feed.shift();
-      burst(g.particles, e.x, e.y, e.def.color, 14, 140);
-      floater(g.particles, e.x, e.y - 16, `+${reward}`, '#ffd76a');
-      g.audio.kill();
-    } else if (e.leaked) {
-      g.warmth -= e.def.leak;
-      g.leakedTotal += 1;
-      burst(g.particles, e.x, e.y, '#9fd8ff', 18, 160);
-      floater(g.particles, e.x, e.y - 16, `-${e.def.leak} warmth`, '#ff6b6b');
-      g.audio.leak();
-      if (g.warmth <= 0) {
-        g.warmth = 0;
-        g.screen = SCREEN_DEFEAT;
-        g.audio.lose();
-      }
-    }
+    const bounce = beamBounceHit(segments, e, width / 2);
+    if (bounce < 0) continue;
+    const dps = beamDamageFor(g, e, bounce);
+    e.hp -= dps * dt;
+    e.flash = 0.1;
+    if (e.hp <= 0) e.dead = true;
   }
-  g.enemies = g.enemies.filter((e) => !e.dead && !e.leaked);
-}
 
-function handleBuildInput(g, input) {
-  for (const kind of TOWER_KEYS) {
-    if (input.wasPressed(TOWERS[kind].key)) {
-      g.selectedKind = kind;
-      // Picking a tower puts the ward pen away — the Keeper holds one
-      // tool at a time.
-      g.ward.tool = false;
-    }
-  }
-  // Ember Wards (v7): V opens the ward tool, V again puts it away.
-  if (input.wasPressed('v')) {
-    g.ward.tool = !g.ward.tool;
-    if (g.ward.tool) say(g, 'Ember ward tool — drag the mouse to draw a line of light, release to lay it', 3);
-    else if (g.ward.drawing) { g.ward.drawing = false; g.ward.points = []; }
-  }
-  // The dawn's offer (v6): three blessing cards, centre board. A click
-  // on a card takes it and is spent — it must not also select the plot
-  // behind the card. Keys 7 / 8 / 9 take the cards the same way; R (or
-  // the button under the cards) turns the dawn once, for 15 shards.
-  let clickSpent = false;
-  if (g.boonOffer && !g.boonPicked) {
-    if (input.wasPressed('7')) clickSpent = takeBoon(g, 0);
-    else if (input.wasPressed('8')) clickSpent = takeBoon(g, 1);
-    else if (input.wasPressed('9')) clickSpent = takeBoon(g, 2);
-    else if (input.wasPressed('r')) clickSpent = rerollOffer(g);
-    else if (input.mouse.clicked) {
-      const card = boonCardAt(input.mouse.x, input.mouse.y);
-      if (card >= 0) clickSpent = takeBoon(g, card);
-      else if (rerollButtonAt(input.mouse.x, input.mouse.y)) {
-        clickSpent = true;
-        rerollOffer(g);
-      }
-    }
-  }
-  if (input.action('upgrade')) tryUpgrade(g);
-  // Ember Wards (v7): in a wave, with the ward tool open, the mouse
-  // draws instead of builds. The drag's click is spent — it must not
-  // also build a tower on the plot behind the line.
-  if (g.screen === SCREEN_WAVE && g.ward.tool) {
-    if (input.mouse.clicked && !clickSpent) {
-      beginWard(g, input.mouse.x, input.mouse.y);
-      clickSpent = true;
-    } else if (g.ward.drawing && input.mouse.down) {
-      extendWard(g, input.mouse.x, input.mouse.y);
-    }
-    if (g.ward.drawing && !input.mouse.down) {
-      const done = endWard(g);
-      if (done === 'short') say(g, 'Draw a longer line of light — the ward needs a real stroke', 2);
-      else if (done === 'poor') say(g, 'Not enough shards to lay that ward', 2);
-      else if (done === 'ok') say(g, 'Ember ward laid — the road burns where the light falls', 2.5);
-    }
-  }
-  if (input.mouse.clicked && !clickSpent) {
-    const slot = pickSlot(g.world, input.mouse.x, input.mouse.y);
-    if (slot) {
-      tryBuild(g, slot);
-    } else {
-      const towerSlot = pickTowerAt(g.world, input.mouse.x, input.mouse.y);
-      if (towerSlot) g.selectedPlot = towerSlot;
-      else g.selectedPlot = null;
-    }
-  }
-  // Right-click deselects a plot — but not in a wave, where holding the
-  // right button is the Lantern Sweep and the click that starts it is
-  // not a deselect.
-  if (input.mouse.rightClicked && g.screen !== SCREEN_WAVE) g.selectedPlot = null;
-}
-
-function updateWavePlay(g, dt, input) {
-  // Spawning.
+  // Spawning: the march comes in from the top, left and right in turn.
   if (g.spawnQueue.length > 0) {
     g.spawnTimer -= dt;
     if (g.spawnTimer <= 0) {
-      const next = g.spawnQueue.shift();
-      const waveScale = g.difficulty === 'Gentle' ? 0.85 : g.difficulty === 'Scorched' ? 1.2 : 1;
-      const enemy = makeEnemy(next.kind, next.lane, g.wave, g.random);
-      // The wind walks with the march: faster in a gale, harder in a
-      // blizzard, and the Keeper's favour in a dawn wind.
-      enemy.hp = Math.round(enemy.hp * waveScale * g.wind.enemyHp);
-      enemy.maxHp = enemy.hp;
-      enemy.speed *= g.wind.enemySpeed;
-      g.enemies.push(enemy);
-      g.spawnTimer = Math.max(0.35, (requireWaveInterval(g.wave)) * (0.9 + g.random.next() * 0.2));
+      const kind = g.spawnQueue.shift();
+      const side = SPAWN_SIDES[g.spawnSide % SPAWN_SIDES.length];
+      g.spawnSide += 1;
+      const pt = spawnPoint(g.rng, side);
+      const e = spawnEnemy(kind, pt.x, pt.y, nightHpMult(g.night));
+      g.enemies.push(e);
+      g.spawnTimer = nightInterval(g.night) * (0.9 + g.rng.next() * 0.2);
     }
   }
-  // Keeper + towers + enemies + bolts.
-  // The ward tool (v7) holds the Keeper's hands: while it is open he
-  // draws light instead of throwing bolts.
-  updateKeeper(g.keeper, dt, input, (b) => fireBolt(g, b), g.audio, true, !g.ward.tool);
-  // The Lantern Sweep (v6): the cone the Keeper holds slows and scorches
-  // the caught frost and rekindles the caught towers.
-  if (g.keeper.sweeping) applySweep(g, g.now);
-  // The moon turns (v7): the band's silver light holds the frost.
-  if (g.moon) applyMoon(g, g.now);
-  // Ember wards (v7): the lines the Keeper laid burn and slow the march.
-  if (g.wards.length > 0) applyWards(g, g.now);
-  if (input.action('bell')) {
-    // A blessing taken at dawn (Long Fuse) holds the freeze longer.
-    if (tollBell(g.keeper, g.enemies, g.now, g.audio, KEEPER.bellFreezeSeconds + g.boon.bellBonus)) {
-      g.stats.bells += 1;
-      burst(g.particles, g.keeper.x, g.keeper.y, '#9fd8ff', 20, 200);
+
+  // The march. moveEnemy returns 'holding' when the Matriarch has
+  // stopped at range — that is when she throws ice at the hearth.
+  for (const e of g.enemies) {
+    const state = moveEnemy(e, dt);
+    if (enemyAtHearth(e)) {
+      g.hearthHp -= e.damage;
+      e.leaked = true;
+      burst(g.particles, e.x, e.y, false);
+      floater(g.particles, e.x, e.y - 14, `-${e.damage} warmth`, '#ff6b6b');
+      g.audio.hearthHit();
+      if (g.hearthHp <= 0) {
+        g.hearthHp = 0;
+        g.screen = SCREEN_DEFEAT;
+        g.audio.defeat();
+        return;
+      }
+    }
+    if (state === 'holding' && !e.dead && !e.leaked) {
+      e.boltTimer -= dt;
+      if (e.boltTimer <= 0) {
+        e.boltTimer = 2.8;
+        const ang = Math.atan2(HEARTH.y - e.y, HEARTH.x - e.x);
+        g.bolts.push({ x: e.x, y: e.y, angle: ang, speed: 260, radius: 6, alive: true });
+        g.audio.bossBolt();
+      }
     }
   }
-  // The Keeper's Ember Arts (v8): Z frost nova, X ember surge, C kindle.
-  if (input.wasPressed('z')) castArt(g, 'nova');
-  if (input.wasPressed('x')) castArt(g, 'surge');
-  if (input.wasPressed('c')) castArt(g, 'kindle');
-  for (const slot of [...g.world.plots, ...g.world.walls]) {
-    if (!slot.tower) continue;
-    const events = updateTower(slot.tower, dt, g.now, g.enemies, (b) => fireBolt(g, b));
-    for (const ev of events) {
-      if (ev.type === 'burn') burst(g.particles, ev.x, ev.y - 10, '#ff7a1a', 3, 40);
-      if (ev.type === 'ring') burst(g.particles, ev.x, ev.y - 14, '#9fd8ff', 8, 90);
+
+  // Boss bolts fly; one that reaches the hearth steals warmth.
+  for (const b of g.bolts) {
+    if (!b.alive) continue;
+    b.x += Math.cos(b.angle) * b.speed * dt;
+    b.y += Math.sin(b.angle) * b.speed * dt;
+    if (Math.hypot(b.x - HEARTH.x, b.y - HEARTH.y) < HEARTH.r + b.radius) {
+      b.alive = false;
+      g.hearthHp -= 5;
+      burst(g.particles, HEARTH.x, HEARTH.y - 20, false);
+      floater(g.particles, HEARTH.x, HEARTH.y - 40, '-6 warmth', '#ff6b6b');
+      g.audio.hearthHit();
+      if (g.hearthHp <= 0) {
+        g.hearthHp = 0;
+        g.screen = SCREEN_DEFEAT;
+        g.audio.defeat();
+        return;
+      }
+    }
+    if (b.x < 0 || b.x > VIEW_W || b.y < 0 || b.y > VIEW_H) b.alive = false;
+  }
+  g.bolts = g.bolts.filter((b) => b.alive);
+
+  // Glimmer shards drift down; the beam gathers them.
+  g.shardTimer -= dt;
+  if (g.shardTimer <= 0 && g.shards.length < 3) {
+    g.shardTimer = 7;
+    g.shards.push({
+      x: 280 + g.rng.next() * 720,
+      y: 60,
+      vy: 12,
+      age: 0,
+      value: SHARD_VALUE,
+    });
+  }
+  for (const s of g.shards) {
+    s.age += dt;
+    s.y += s.vy * dt;
+    s.x += Math.sin(s.age * 1.5) * 8 * dt;
+    if (pointInBeam(s.x, s.y, segments, 10)) {
+      s.collected = true;
+      g.embers += s.value;
+      g.stats.shardsCollected += 1;
+      floater(g.particles, s.x, s.y - 10, `+${s.value} embers`, '#9fd8ff');
+      g.audio.coin();
     }
   }
-  for (const e of g.enemies) updateEnemy(e, dt, g.now, g.world);
-  updateBolts(g, dt);
-  resolveDeaths(g);
+  g.shards = g.shards.filter((s) => !s.collected && s.y < VIEW_H - 40);
+
+  // Deaths.
+  for (const e of g.enemies) {
+    if (e.dead) killEnemy(g, e, g.focusing);
+  }
+  g.enemies = g.enemies.filter((e) => !e.dead && !e.leaked);
   if (g.screen === SCREEN_DEFEAT) return;
-  if (g.spawnQueue.length === 0 && g.enemies.length === 0) endWave(g);
+  if (g.spawnQueue.length === 0 && g.enemies.length === 0) endNight(g);
 }
 
-function requireWaveInterval(wave) {
-  // The spawn interval lives in the wave schedule itself (config.js), so
-  // the schedule is the one source of truth — no second list to drift.
-  // The endless schedule (v8) lives in the same place, past wave 16.
-  return spawnSpecForWave(wave).interval || 1;
+// The build phase: place, turn and remove mirrors; take a gift; start.
+function handleBuildInput(g, input) {
+  const m = input.mouse;
+  // Gift cards: click, or keys 1/2/3.
+  if (g.upgradeOffer && !g.upgradePicked) {
+    if (input.wasPressed('1')) takeUpgrade(g, 0);
+    else if (input.wasPressed('2')) takeUpgrade(g, 1);
+    else if (input.wasPressed('3')) takeUpgrade(g, 2);
+    else if (m.clicked) {
+      const card = giftCardAt(m.x, m.y);
+      if (card >= 0) takeUpgrade(g, card);
+    }
+  }
+  // Mirror keys: Q/E turn the selected mirror, wheel turns it too.
+  if (input.wasPressed('q')) rotateSelected(g.mirrors, -MIRROR.rotateStep);
+  if (input.wasPressed('e')) rotateSelected(g.mirrors, MIRROR.rotateStep);
+  if (input.wheel !== 0) rotateSelected(g.mirrors, input.wheel * MIRROR.wheelStep);
+  // Right-click removes the selected mirror and refunds most of its cost.
+  if (m.rightClicked) {
+    const sel = selectedMirror(g.mirrors);
+    if (sel) {
+      removeSelected(g.mirrors);
+      g.embers += MIRROR.refund;
+      g.stats.mirrorsRemoved += 1;
+      say(g, `Mirror lifted — ${MIRROR.refund} embers back`, 2);
+      g.audio.removeMirror();
+    }
+  }
+  // Left-click: pick a mirror, or place a new one on empty ground.
+  if (m.clicked) {
+    if (g.upgradeOffer && !g.upgradePicked && giftCardAt(m.x, m.y) >= 0) return;
+    const hit = mirrorAt(g.mirrors, m.x, m.y);
+    if (hit) {
+      g.mirrors.selected = hit.id;
+      return;
+    }
+    const check = canPlace(g.mirrors, m.x, m.y, g.embers, g.maxMirrors);
+    if (!check.ok) {
+      say(g, check.why, 2.5);
+      g.audio.denied();
+      return;
+    }
+    placeMirror(g.mirrors, m.x, m.y);
+    g.embers -= MIRROR.cost;
+    g.stats.mirrorsPlaced += 1;
+    say(g, 'Ice mirror set — drag the mouse to aim the beam, Q/E to turn it', 2.5);
+    g.audio.placeMirror();
+  }
+}
+
+// The gift cards sit across the middle of the board while the offer is
+// open; the click zones here must match the renderer's cards exactly.
+export function giftCardAt(x, y) {
+  if (y < 300 || y > 430) return -1;
+  for (let i = 0; i < 3; i += 1) {
+    const cx = 340 + i * 200;
+    if (x >= cx && x <= cx + 180) return i;
+  }
+  return -1;
 }
 
 export function updateGame(g, dt, input) {
   g.now += dt;
-  // The snow itself feels the wind: a gale drives it sideways across the
-  // square, a still night lets it fall straight down.
-  updateParticles(g.particles, dt, g.now, { x: 640, y: 360 }, g.wind.snowDrift);
-  // The village lives on its own clock: the sleigh circles the hearth
-  // whenever the game runs, and a loop pays out only while building or
-  // fighting — never on the title screen. The dog trots its circle too.
-  updateVillage(g, dt);
-  updateAnimals(g, dt);
+  updateParticles(g.particles, dt);
+  // The hearth's embers rise while the game runs — title screen included.
+  if (g.screen !== SCREEN_DEFEAT) spawnEmber(g.particles, HEARTH.x, HEARTH.y, 1);
   if (g.messageUntil < g.now) g.message = '';
-  if (input.action('mute')) {
-    g.muted = g.audio.toggleMute();
-  }
+  if (input.action('mute')) g.muted = g.audio.toggleMute();
+
   if (g.screen === SCREEN_TITLE) {
     if (input.mouse.clicked) {
-      const m = input.mouse;
-      if (m.x > 540 && m.x < 740 && m.y > 330 && m.y < 392) {
+      const m2 = input.mouse;
+      if (m2.x > 540 && m2.x < 740 && m2.y > 330 && m2.y < 392) {
         g.audio.unlock();
-        g.audio.startCrackle();
-        startGame(g, g.difficulty);
-      } else if (m.x > 420 && m.x < 520 && m.y > 410 && m.y < 452) {
-        g.difficulty = 'Gentle';
-      } else if (m.x > 540 && m.x < 640 && m.y > 410 && m.y < 452) {
-        g.difficulty = 'Keeper';
-      } else if (m.x > 660 && m.x < 780 && m.y > 410 && m.y < 452) {
-        g.difficulty = 'Scorched';
+        startGame(g);
       }
     }
     if (input.action('confirm')) {
       g.audio.unlock();
-      g.audio.startCrackle();
-      startGame(g, g.difficulty);
+      startGame(g);
     }
     return;
   }
@@ -603,13 +446,7 @@ export function updateGame(g, dt, input) {
   if (g.screen === SCREEN_VICTORY || g.screen === SCREEN_DEFEAT) {
     const m = input.mouse;
     const inPlayAgain = m.x > 540 && m.x < 740 && m.y > 520 && m.y < 572;
-    const inEndless = m.x > 540 && m.x < 740 && m.y > 584 && m.y < 636;
-    if (input.action('restart') || (input.mouse.clicked && inPlayAgain)) {
-      startGame(g, g.difficulty);
-    } else if (g.screen === SCREEN_VICTORY && (input.wasPressed('e') || (input.mouse.clicked && inEndless))) {
-      // The endless afterglow (v8): E, or the button under PLAY AGAIN.
-      beginEndless(g);
-    }
+    if (input.action('restart') || (m.clicked && inPlayAgain)) startGame(g);
     return;
   }
   if (input.action('pause')) {
@@ -617,195 +454,148 @@ export function updateGame(g, dt, input) {
     g.screen = SCREEN_PAUSED;
     return;
   }
-  // The Keeper's Ember Arts (v8): cooldowns tick in build and wave alike.
-  if (g.screen === SCREEN_BUILD || g.screen === SCREEN_WAVE) tickArts(g, dt);
   if (g.screen === SCREEN_BUILD) {
-    if (!g.keeper) g.keeper = makeKeeper();
+    // The beam is always visible, even while building — the player aims
+    // and places mirrors against it, so the build phase is already play.
+    g.beamAngle = Math.atan2(input.mouse.y - HEARTH.y, input.mouse.x - HEARTH.x);
+    g.focusing = false;
+    const segments = castBeam({ x: HEARTH.x, y: HEARTH.y }, g.beamAngle, g.mirrors.list);
+    g.beam = { segments, width: BEAM.sweepWidth * g.sweepWidthMult, focusing: false };
+    g.audio.setBeam(0.3);
     handleBuildInput(g, input);
-    updateKeeper(g.keeper, dt, input, () => {}, g.audio, false);
     g.buildTimer -= dt;
     if (input.action('confirm')) {
-      // A dawn offer unpicked blocks the wave: the Keeper chooses first.
-      // The toast says so, and the cards name their keys.
-      if (g.boonOffer && !g.boonPicked) {
-        say(g, 'Choose a dawn blessing first — click a card, or press 7, 8 or 9', 2.5);
+      if (g.upgradeOffer && !g.upgradePicked) {
+        say(g, 'Take a dawn gift first — click a card, or press 1, 2 or 3', 2.5);
         return;
       }
-      g.shards += EARLY_START_BONUS;
-      say(g, `Early start! +${EARLY_START_BONUS} shards`, 2);
-      startWave(g);
+      g.embers += EARLY_START_BONUS;
+      say(g, `Early start! +${EARLY_START_BONUS} embers`, 2);
+      startNight(g);
       return;
     }
     if (g.buildTimer <= 0) {
-      // The timer ran out with an offer unpicked: the dawn takes the
-      // first card for the Keeper, so the night never stalls.
-      if (g.boonOffer && !g.boonPicked) takeBoon(g, 0);
-      startWave(g);
+      if (g.upgradeOffer && !g.upgradePicked) takeUpgrade(g, 0);
+      startNight(g);
     }
     return;
   }
-  if (g.screen === SCREEN_WAVE) {
-    if (!g.keeper) g.keeper = makeKeeper();
-    handleBuildInput(g, input);
-    updateWavePlay(g, dt, input);
+  if (g.screen === SCREEN_NIGHT) {
+    // In a night the player can still lift a mirror with a right-click —
+    // the beam is the weapon, and the mirrors are part of it.
+    if (input.mouse.rightClicked) {
+      const sel = selectedMirror(g.mirrors);
+      if (sel) {
+        removeSelected(g.mirrors);
+        g.embers += MIRROR.refund;
+        g.stats.mirrorsRemoved += 1;
+        say(g, `Mirror lifted — ${MIRROR.refund} embers back`, 2);
+        g.audio.removeMirror();
+      }
+    }
+    if (input.mouse.clicked) {
+      const hit = mirrorAt(g.mirrors, input.mouse.x, input.mouse.y);
+      if (hit) g.mirrors.selected = hit.id;
+    }
+    if (input.wasPressed('q')) rotateSelected(g.mirrors, -MIRROR.rotateStep);
+    if (input.wasPressed('e')) rotateSelected(g.mirrors, MIRROR.rotateStep);
+    if (input.wheel !== 0) rotateSelected(g.mirrors, input.wheel * MIRROR.wheelStep);
+    updateNight(g, dt, input);
   }
 }
 
-// A headless self-test: plays the game with a simple scripted strategy and
-// reports whether the loop works (waves clear, kills happen, no crash). The
-// harness runs this in a browser with ?selftest=1 and reads document.title.
+// A headless self-test: plays all ten nights with a scripted keeper and
+// reports whether the loop works — nights clear, kills happen, no crash.
+// The harness runs this with ?selftest=1 and reads document.title.
 export function runSelfTest(g) {
   const errors = [];
   try {
-    startGame(g, 'Keeper');
-    // Scripted builder: braziers near the hearth, cannons on the flanks,
-    // walls on every road, then start the waves.
-    const buildOrder = [
-      ['brazier', 520, 250], ['brazier', 760, 250], ['brazier', 520, 470], ['brazier', 760, 470],
-      ['brazier', 420, 150], ['brazier', 860, 150],
-      ['brazier', 980, 250], ['brazier', 300, 470],
-      ['cannon', 300, 150], ['cannon', 980, 150], ['cannon', 300, 570], ['cannon', 980, 570],
-      ['cannon', 420, 570], ['cannon', 860, 570],
-      ['bell', 420, 250], ['bell', 860, 470], ['bell', 300, 250],
-      ['lantern', 420, 470], ['mortar', 860, 250],
+    startGame(g);
+    // The scripted keeper places four mirrors in a diamond above the
+    // hearth: two at +45° turning the beam left, two at -45° turning it
+    // right, so the beam can reach around the frost pillars.
+    g.embers = 400;
+    const plan = [
+      [520, 470, Math.PI / 4],
+      [760, 470, -Math.PI / 4],
+      [400, 300, Math.PI / 4],
+      [880, 300, -Math.PI / 4],
     ];
-    // Grant the test enough shards to build the plan (the real game earns them).
-    g.shards = 1000;
-    for (const [kind, x, y] of buildOrder) {
-      g.selectedKind = kind;
-      const slot = pickSlot(g.world, x, y);
-      if (slot) tryBuild(g, slot);
+    for (const [x, y, a] of plan) {
+      const mm = placeMirror(g.mirrors, x, y);
+      mm.angle = a;
+      g.embers -= MIRROR.cost;
+      g.stats.mirrorsPlaced += 1;
     }
-    for (const w of g.world.walls) {
-      g.selectedKind = 'wall';
-      if (!w.tower) tryBuild(g, w);
-    }
-    g.shards = 60;
-    // Play: 10 waves, keeper auto-aims at the nearest creature, bell on cooldown.
+    g.embers = 60;
     const fakeInput = {
       keys: new Set(), pressed: new Set(),
-      mouse: { x: 640, y: 360, down: true, clicked: false, rightClicked: false, rightDown: false },
-      down: () => false,
+      mouse: { x: 640, y: 360, down: false, clicked: false, rightClicked: false },
+      wheel: 0,
+      down: (n) => n === ' ' && fakeInput.mouse.down,
       wasPressed: () => false,
       action: (name) => name === 'confirm' && g.screen === SCREEN_BUILD,
       endFrame: () => {},
     };
     let steps = 0;
-    let wavesCleared = 0;
-    let lastWave = 0;
-    let maintainedWave = -1;
-    // Ember wards (v7): the scripted Keeper draws one line a wave,
-    // alternating the east road and the north road, the way a player
-    // would lay light across the march. The moon's place is recorded
-    // each wave, so the report shows it really turned.
-    let wardWave = 0;
-    const moonXs = [];
-    // The Keeper's Ember Arts (v8): the scripted Keeper casts on a
-    // rhythm — kindle when the hearth runs cool, nova when the march
-    // closes in, surge when it stands off — so the self-test exercises
-    // the arts the way a player would.
-    let lastArtAt = 0;
-    // Kindle would never fire on its own in this strong defence —
-    // warmth never dips below 75 — so the scripted Keeper kindles once
-    // mid-game, through the real cast path, to prove the flare and the
-    // tower quickening run.
-    let kindleTested = false;
-    // Sixteen waves take longer than ten: thirty minutes of sim time.
+    let nightsCleared = 0;
+    let lastNight = 0;
+    let maintainedNight = -1;
+    // Thirty minutes of sim time is the cap; ten nights take less.
     while (steps < 60 * 60 * 30 && g.screen !== SCREEN_VICTORY && g.screen !== SCREEN_DEFEAT) {
-      // Between waves, a real player spends: rebuild chewed walls, upgrade towers.
-      if (g.screen === SCREEN_BUILD && maintainedWave !== g.wave) {
-        maintainedWave = g.wave;
-        // The dawn offers a blessing after every wave: take the first
-        // card, or the wave never starts (ENTER is blocked until chosen).
-        if (g.boonOffer && !g.boonPicked) takeBoon(g, 0);
-        for (const w of g.world.walls) {
-          if (!w.tower && g.shards >= TOWERS.wall.cost) {
-            g.selectedKind = 'wall';
-            tryBuild(g, w);
-          }
-        }
-        for (const p of g.world.plots) {
-          if (p.tower && canUpgrade(p.tower)) {
-            g.selectedPlot = p;
-            while (canUpgrade(p.tower) && g.shards > 80) tryUpgrade(g);
-          }
-        }
-        g.selectedPlot = null;
+      if (g.screen === SCREEN_BUILD && maintainedNight !== g.night) {
+        maintainedNight = g.night;
+        if (g.upgradeOffer && !g.upgradePicked) takeUpgrade(g, 0);
       }
-      // Aim at the nearest living creature.
+      // Aim: first anything close to the hearth — that is the emergency.
+      // Then the Matriarch, when nothing is at the door: she holds off
+      // at range and throws ice at the hearth, so she cannot be ignored
+      // for long. Otherwise the nearest creature.
       let best = null;
       let bestD = 1e9;
       for (const e of g.enemies) {
-        const d = Math.hypot(e.x - g.keeper.x, e.y - g.keeper.y);
-        if (d < bestD) { bestD = d; best = e; }
+        const d = Math.hypot(e.x - HEARTH.x, e.y - HEARTH.y);
+        if (d < 260 && d < bestD) { bestD = d; best = e; }
       }
-      if (best) { fakeInput.mouse.x = best.x; fakeInput.mouse.y = best.y; }
-      // The Lantern Sweep (v6): hold it while the march is close enough
-      // for the cone to catch — the oil drains, then refills while it rests.
-      fakeInput.mouse.rightDown = g.screen === SCREEN_WAVE && bestD < 320;
-      if (g.screen === SCREEN_BUILD) fakeInput.action = (name) => name === 'confirm';
-      else fakeInput.action = (name) => name === 'bell' && g.keeper.bellCooldown <= 0;
-      if (g.wave > lastWave) { wavesCleared = g.wave; lastWave = g.wave; }
-      // One ward a wave, drawn through the real code path: across the
-      // east road on even waves, down the north road on odd ones.
-      if (g.screen === SCREEN_WAVE && g.wave > wardWave) {
-        wardWave = g.wave;
-        moonXs.push(g.moon ? g.moon.x : null);
-        if (g.shards >= 30) {
-          if (g.wave % 2 === 0) {
-            beginWard(g, 470, 360);
-            for (let x = 490; x <= 770; x += 20) extendWard(g, x, 360);
-            endWard(g);
-          } else {
-            beginWard(g, 640, 210);
-            for (let y = 230; y <= 510; y += 20) extendWard(g, 640, y);
-            endWard(g);
-          }
+      if (!best) best = g.enemies.find((e) => e.kind === 'matriarch');
+      if (!best) {
+        for (const e of g.enemies) {
+          const d = Math.hypot(e.x - HEARTH.x, e.y - HEARTH.y);
+          if (d < bestD) { bestD = d; best = e; }
         }
       }
-      // One art every eight seconds of wave time, through the real
-      // cast path — cooldowns, the nova ring, the piercing bolts, the
-      // kindle flare all run, never a shortcut.
-      if (g.screen === SCREEN_WAVE && g.now - lastArtAt > 8) {
-        lastArtAt = g.now;
-        if (g.warmth < 75) castArt(g, 'kindle');
-        else if (g.enemies.some((e) => Math.hypot(e.x - g.keeper.x, e.y - g.keeper.y) < 220)) castArt(g, 'nova');
-        else if (g.enemies.length > 0) castArt(g, 'surge');
+      if (best) {
+        fakeInput.mouse.x = best.x;
+        fakeInput.mouse.y = best.y;
+        fakeInput.mouse.down = best.armored || best.boss || g.focus > 85;
+      } else {
+        fakeInput.mouse.x = 640;
+        fakeInput.mouse.y = 200;
+        fakeInput.mouse.down = false;
       }
-      if (g.screen === SCREEN_WAVE && g.wave === 8 && !kindleTested) {
-        kindleTested = true;
-        castArt(g, 'kindle');
-      }
+      if (g.night > lastNight) { nightsCleared = g.night; lastNight = g.night; }
       updateGame(g, 1 / 60, fakeInput);
       steps += 1;
     }
-    const ok = g.screen === SCREEN_VICTORY || wavesCleared >= 3;
+    const ok = g.screen === SCREEN_VICTORY || nightsCleared >= 3;
     return {
       ok,
       screen: g.screen,
-      wavesCleared,
+      nightsCleared,
       kills: g.kills,
       score: g.score,
-      warmth: g.warmth,
+      hearthHp: g.hearthHp,
       steps,
-      // The night's ledger, so a staged end screen can show the real
-      // numbers a won game actually posts — never invented ones.
-      killsByKind: g.stats.killsByKind,
-      bestCombo: g.stats.bestCombo,
-      built: g.stats.built,
-      upgraded: g.stats.upgraded,
-      bells: g.stats.bells,
-      shardsEarned: g.stats.shardsEarned,
-      boonsTaken: g.stats.boonsTaken,
-      boonsHeld: g.boon.held,
-      sweepHeldSeconds: g.keeper ? Math.round(g.keeper.sweepHeld * 10) / 10 : 0,
-      wardsDrawn: g.stats.wardsDrawn,
-      artsCast: g.stats.artsCast,
-      moonXs,
+      killsByKind: g.killsByKind,
+      bestCombo: g.bestCombo,
+      mirrorsPlaced: g.stats.mirrorsPlaced,
+      focusSeconds: Math.round(g.stats.focusSeconds),
+      shardsCollected: g.stats.shardsCollected,
+      giftsTaken: g.stats.giftsTaken,
       errors,
     };
   } catch (err) {
-    errors.push(String(err && err.stack || err));
+    errors.push(String((err && err.stack) || err));
     return { ok: false, screen: g.screen, errors };
   }
 }

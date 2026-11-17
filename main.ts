@@ -1,4 +1,4 @@
-// FROSTBELL — Keeper of the Last Hearth: a make.fun best-game-01 entry.
+// FROSTBELL v9 — Keeper of the Last Hearth: a make.fun best-game-01 entry.
 // The game is this directory's game/ folder, plain static files a desktop
 // browser loads offline (game/index.html and its ES modules, no library and
 // no network request). This program hands it in: it copies game/ and
@@ -23,10 +23,10 @@ cpSync(join(here, 'game'), join(out, 'game'), { recursive: true });
 mkdirSync(join(out, 'screenshots'), { recursive: true });
 if (existsSync(join(here, 'screenshots'))) cpSync(join(here, 'screenshots'), join(out, 'screenshots'), { recursive: true });
 
-// The scorer's own caps (reference/gate.json): only text_max_bytes shapes the
-// bytes; the others refuse an entry the scorer would refuse (more than 4
-// screenshots or one over 256 KiB; more than 993 files in game/ or 48 MiB of
-// game files, in all, or a path under game/ over 1000 bytes).
+// The scorer's own caps (reference/gate.json): only text_max_bytes shapes
+// the bytes; the others refuse an entry the scorer would refuse (more than
+// 4 screenshots or one over 256 KiB; more than 993 files in game/ or 48 MiB
+// of game files, in all, or a path under game/ over 1000 bytes).
 writeFileSync(
   join(out, 'dossier.json'),
   buildDossier(out, {

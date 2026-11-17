@@ -1,90 +1,107 @@
-// All sound is synthesised with WebAudio: no audio files, no network.
-// The hearth crackles, bolts thwip, coins chime, the bell tolls, and a horn
-// opens every wave. Nothing plays until the player first interacts, and M
-// mutes everything.
+// Sound, synthesised with WebAudio: no audio files, nothing fetched. A soft
+// hum follows the beam, a chime marks a kill, a low thud marks the hearth
+// taking a hit. Everything is guarded so a browser without audio (or a
+// headless one) simply stays silent.
 
 export function createAudio() {
   let ctx = null;
+  let master = null;
   let muted = false;
-  let crackleTimer = null;
+  let hum = null;
+  let humGain = null;
 
   function ensure() {
-    if (ctx) return ctx;
+    if (ctx) return true;
     try {
       const AC = window.AudioContext || window.webkitAudioContext;
-      if (!AC) return null;
+      if (!AC) return false;
       ctx = new AC();
-    } catch { return null; }
-    return ctx;
+      master = ctx.createGain();
+      master.gain.value = 0.35;
+      master.connect(ctx.destination);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   function tone(freq, dur, type, vol, slideTo) {
-    if (muted) return;
-    const c = ensure();
-    if (!c || c.state === 'suspended') return;
-    const t0 = c.currentTime;
-    const osc = c.createOscillator();
-    const gain = c.createGain();
-    osc.type = type || 'sine';
-    osc.frequency.setValueAtTime(freq, t0);
-    if (slideTo) osc.frequency.exponentialRampToValueAtTime(Math.max(20, slideTo), t0 + dur);
-    gain.gain.setValueAtTime(vol || 0.12, t0);
-    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
-    osc.connect(gain).connect(c.destination);
-    osc.start(t0);
-    osc.stop(t0 + dur + 0.02);
-  }
-
-  function noise(dur, vol, lowFreq) {
-    if (muted) return;
-    const c = ensure();
-    if (!c || c.state === 'suspended') return;
-    const len = Math.floor(c.sampleRate * dur);
-    const buf = c.createBuffer(1, len, c.sampleRate);
-    const data = buf.getChannelData(0);
-    for (let i = 0; i < len; i += 1) data[i] = (Math.random() * 2 - 1) * (1 - i / len);
-    const src = c.createBufferSource();
-    src.buffer = buf;
-    const filter = c.createBiquadFilter();
-    filter.type = 'lowpass';
-    filter.frequency.value = lowFreq || 1200;
-    const gain = c.createGain();
-    gain.gain.value = vol || 0.08;
-    src.connect(filter).connect(gain).connect(c.destination);
-    src.start();
+    if (muted || !ensure()) return;
+    try {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = type || 'sine';
+      osc.frequency.setValueAtTime(freq, ctx.currentTime);
+      if (slideTo) osc.frequency.exponentialRampToValueAtTime(slideTo, ctx.currentTime + dur);
+      gain.gain.setValueAtTime(vol || 0.2, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + dur);
+      osc.connect(gain);
+      gain.connect(master);
+      osc.start();
+      osc.stop(ctx.currentTime + dur);
+    } catch {
+      // Audio is decoration; never let it break the game.
+    }
   }
 
   return {
     unlock() { ensure(); },
-    toggleMute() { muted = !muted; return muted; },
+    toggleMute() {
+      muted = !muted;
+      if (master) master.gain.value = muted ? 0 : 0.35;
+      return muted;
+    },
     get muted() { return muted; },
-    // One note, now, for the melody in music.js: the same guarded tone,
-    // public so the melody can play it on its own clock.
-    playNote(freq, dur, type, vol) { tone(freq, dur, type, vol); },
-    shoot() { tone(720, 0.09, 'triangle', 0.07, 320); },
-    hit() { noise(0.06, 0.06, 2400); },
-    kill() { tone(520, 0.12, 'sine', 0.1, 780); tone(1040, 0.08, 'sine', 0.05, 1560); },
-    coin() { tone(1320, 0.1, 'sine', 0.08); tone(1760, 0.14, 'sine', 0.06); },
-    build() { tone(220, 0.12, 'square', 0.05, 330); tone(440, 0.1, 'sine', 0.06); },
-    denied() { tone(160, 0.16, 'sawtooth', 0.06, 110); },
-    leak() { tone(300, 0.35, 'sawtooth', 0.1, 90); noise(0.3, 0.08, 500); },
-    horn() { tone(196, 0.5, 'sawtooth', 0.09, 196); tone(294, 0.5, 'sawtooth', 0.07, 294); },
-    bell() { tone(523, 1.4, 'sine', 0.16); tone(784, 1.1, 'sine', 0.1); tone(1046, 0.9, 'sine', 0.06); },
-    // The Keeper's Ember Arts (v8): a nova's cold ring, a surge's
-    // rising fan, a kindle's warm flare.
-    nova() { tone(880, 0.35, 'sine', 0.12, 220); noise(0.25, 0.05, 900); },
-    surge() { tone(660, 0.12, 'triangle', 0.09, 990); tone(990, 0.1, 'triangle', 0.06, 1320); },
-    kindle() { tone(523, 0.2, 'sine', 0.1); tone(784, 0.3, 'sine', 0.08); },
-    waveClear() { [523, 659, 784, 1046].forEach((f, i) => setTimeout(() => tone(f, 0.22, 'sine', 0.09), i * 90)); },
-    win() { [523, 659, 784, 1046, 1318].forEach((f, i) => setTimeout(() => tone(f, 0.4, 'sine', 0.1), i * 130)); },
-    lose() { [392, 330, 262, 196].forEach((f, i) => setTimeout(() => tone(f, 0.5, 'triangle', 0.09), i * 160)); },
-    startCrackle() {
-      if (crackleTimer) return;
-      crackleTimer = setInterval(() => {
-        if (!muted && ctx && ctx.state === 'running' && Math.random() < 0.5) {
-          noise(0.05, 0.02, 3000);
+    placeMirror() { tone(420, 0.12, 'triangle', 0.25, 300); },
+    removeMirror() { tone(300, 0.1, 'triangle', 0.18, 200); },
+    kill() { tone(880, 0.16, 'sine', 0.22, 1320); },
+    shatter() { tone(520, 0.3, 'sawtooth', 0.14, 90); },
+    hearthHit() { tone(140, 0.35, 'sawtooth', 0.3, 70); },
+    nightClear() {
+      tone(523, 0.18, 'sine', 0.22);
+      setTimeout(() => tone(659, 0.18, 'sine', 0.22), 140);
+      setTimeout(() => tone(784, 0.3, 'sine', 0.24), 280);
+    },
+    victory() {
+      [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => tone(f, 0.4, 'sine', 0.24), i * 170));
+    },
+    defeat() {
+      [392, 330, 262, 196].forEach((f, i) => setTimeout(() => tone(f, 0.45, 'triangle', 0.2), i * 200));
+    },
+    pickUpgrade() { tone(660, 0.14, 'sine', 0.2, 990); },
+    // A low horn when a night begins — the march is coming.
+    nightStart() { tone(196, 0.5, 'triangle', 0.25, 147); },
+    // A bright blip when the beam gathers a glimmer shard.
+    coin() { tone(1320, 0.1, 'sine', 0.18, 1760); },
+    // A cold zap when the Matriarch throws an ice bolt.
+    bossBolt() { tone(700, 0.18, 'sawtooth', 0.12, 180); },
+    // A dull buzz when the game refuses an action.
+    denied() { tone(160, 0.15, 'square', 0.12, 110); },
+    // The beam hum: a quiet oscillator whose gain follows the beam. Called
+    // every frame with the beam's strength (0 when the beam is idle).
+    setBeam(strength) {
+      if (muted || !ensure()) return;
+      try {
+        if (!hum) {
+          hum = ctx.createOscillator();
+          hum.type = 'sawtooth';
+          hum.frequency.value = 96;
+          humGain = ctx.createGain();
+          humGain.gain.value = 0;
+          const filter = ctx.createBiquadFilter();
+          filter.type = 'lowpass';
+          filter.frequency.value = 420;
+          hum.connect(filter);
+          filter.connect(humGain);
+          humGain.connect(master);
+          hum.start();
         }
-      }, 240);
+        const target = Math.min(0.05, 0.012 + strength * 0.05);
+        humGain.gain.setTargetAtTime(target, ctx.currentTime, 0.08);
+        hum.frequency.setTargetAtTime(96 + strength * 60, ctx.currentTime, 0.1);
+      } catch {
+        // Silence is fine.
+      }
     },
   };
 }

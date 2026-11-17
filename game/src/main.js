@@ -3,8 +3,8 @@
 //
 // ?seed=N fixes the night's randomness. ?shot=title|build|play|victory|defeat
 // (with &seed=N) stages that scene instead of running the loop, paints it
-// twice and sets window.__shotReady for a screenshot. ?selftest=1 plays sixteen
-// waves with a scripted strategy and reports SELFTEST ok (or ERR:) in the
+// twice and sets window.__shotReady for a screenshot. ?selftest=1 plays ten
+// nights with a scripted keeper and reports SELFTEST ok (or ERR:) in the
 // document title, so a headless browser can check the game end to end.
 
 import { BEST_KEY, STEP, VIEW_W, VIEW_H } from './config.js';
@@ -25,9 +25,9 @@ const seed = Number.isInteger(seedParam) ? seedParam : Math.floor(Math.random() 
 const canvas = document.getElementById('game');
 // 2x supersampling: the canvas paints at twice the logical resolution and
 // the browser downsamples it to the 1280x720 frame, so every edge in a
-// screenshot is antialiased instead of stair-stepped. The renderer scales
-// its context by 2, and input.js maps the mouse to logical coordinates, so
-// no game code ever sees the extra pixels.
+// screenshot is antialiased. The renderer scales its context by 2, and
+// input.js maps the mouse to logical coordinates, so no game code ever
+// sees the extra pixels.
 canvas.width = VIEW_W * 2;
 canvas.height = VIEW_H * 2;
 const audio = createAudio();
@@ -54,7 +54,7 @@ function saveBest(value) {
 game.best = readBest();
 
 function runShot(name) {
-  const scene = stageShot(name, game, updateGame);
+  stageShot(name, game, updateGame);
   let painted = 0;
   function paint() {
     renderer.draw(game);
@@ -63,17 +63,13 @@ function runShot(name) {
     else window.__shotReady = true;
   }
   requestAnimationFrame(paint);
-  document.title = `SELFTEST shot ${name} screen=${game.screen} wave=${game.wave} score=${game.score}`;
+  document.title = `SELFTEST shot ${name} screen=${game.screen} night=${game.night} score=${game.score}`;
 }
 
 function runSelftestMode() {
   const result = runSelfTest(game);
   if (result.ok) {
-    const moonRange = result.moonXs && result.moonXs.length > 0
-      ? ` moon=${result.moonXs[0]}-${result.moonXs[result.moonXs.length - 1]}`
-      : '';
-    const artsTotal = result.artsCast ? (result.artsCast.nova + result.artsCast.surge + result.artsCast.kindle) : 0;
-    document.title = `SELFTEST ok screen=${result.screen} waves=${result.wavesCleared} kills=${result.kills} score=${result.score} warmth=${result.warmth} steps=${result.steps} bestCombo=${result.bestCombo} built=${result.built} upgraded=${result.upgraded} bells=${result.bells} shardsEarned=${result.shardsEarned} boons=${result.boonsTaken} sweep=${result.sweepHeldSeconds}s wards=${result.wardsDrawn} arts=${artsTotal} artsDetail=${JSON.stringify(result.artsCast)}${moonRange} kinds=${JSON.stringify(result.killsByKind)}`;
+    document.title = `SELFTEST ok screen=${result.screen} nights=${result.nightsCleared} kills=${result.kills} score=${result.score} warmth=${result.hearthHp} steps=${result.steps} bestCombo=${result.bestCombo} mirrors=${result.mirrorsPlaced} focus=${result.focusSeconds}s shards=${result.shardsCollected} gifts=${result.giftsTaken} kinds=${JSON.stringify(result.killsByKind)}`;
   } else {
     document.title = `ERR: selftest failed ${JSON.stringify(result).slice(0, 300)}`;
   }
